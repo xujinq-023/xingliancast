@@ -193,7 +193,12 @@ public final class RxEngine {
         else stepMeta(seq, tslo, flags, payload);
     }
 
-    /** Video packet -> access-unit reassembly keyed on ts_us. rx thread only. */
+    /** Video packet -> access-unit reassembly keyed on ts_us. rx thread only.
+     *  NOTE on sender behaviour (pjs.h send_au): a multi-NAL AU emits EACH NAL as a
+     *  FIRST|LAST mini-group sharing one ts, with IDR/KEY flags on every packet.
+     *  A group therefore = every packet sharing the same ts; FIRST with same ts while
+     *  a buffer is open simply appends (it does not restart it). This also covers the
+     *  plain AU-level FIRST..LAST-last-packet semantics. */
     private void stepVideo(long seq, long tslo, int flags, int kind, byte[] payload) {
         boolean first = (flags & F_FIRST) != 0, last = (flags & F_LAST) != 0;
         Asm a = vAsm;
@@ -206,17 +211,19 @@ public final class RxEngine {
                     a.reset();
                     waitingIdr = true;                         // drop half frames, wait IDR
                 }
-                if (!first) return;                            // mid-frame after a hole
+                if (!first) return;                            // mid-group after a hole
             }
         } else if (!first) {
             return;                                            // join mid-stream: wait FIRST
         }
-        if (first) {
+        if (first && a.buf != null && tslo == a.curTs) {
+            // same-ts continuation (multi-NAL AU): keep appending to the open group
+        } else if (first) {
             a.buf = new ByteArrayOutputStream(Math.max(payload.length, 16384));
             a.curTs = tslo;
             a.idr = false;
         } else if (a.buf == null || tslo != a.curTs) {
-            a.reset(); waitingIdr = true; return;              // interleaved ts: not our AU
+            a.reset(); waitingIdr = true; return;              // interleaved ts: not our group
         }
         if (a.buf.size() + payload.length > MAX_AU) {          // oversized: drop, wait IDR
             a.reset(); waitingIdr = true; droppedAu.incrementAndGet(); return;
@@ -231,6 +238,21 @@ public final class RxEngine {
             boolean idr = a.idr;
             a.buf = null;
             onFrame(au, ts64(tslo), idr || hasNal(au, 5));     // NAL scan as flag fallback
+        }
+    }
+
+    // rx-thread cfg accumulation: pjs.h emits SPS and PPS as separate same-ts groups,
+    // so merge them until a complete (sps+pps) pair is available before reconfiguring.
+    private byte[] pendingSps, pendingPps;
+
+    private void noteCfg(byte[] au) {
+        Cfg c = extractCfg(au);
+        if (c == null) return;
+        if (c.sps != null) pendingSps = c.sps;
+        if (c.pps != null) pendingPps = c.pps;
+        if (pendingSps != null && pendingPps != null
+                && (!Arrays.equals(pendingSps, csdSps) || !Arrays.equals(pendingPps, csdPps))) {
+            pipe.obtainMessage(MSG_CFG, new Cfg(pendingSps, pendingPps)).sendToTarget();
         }
     }
 
@@ -266,10 +288,7 @@ public final class RxEngine {
         metaTsHi = (int) u16(full, 0);
         metaCount.incrementAndGet();
         ts64(tslo);                                            // keep the ts base in sync
-        Cfg c = extractCfg(Arrays.copyOfRange(full, 2, full.length));
-        if (c != null && (!Arrays.equals(c.sps, csdSps) || !Arrays.equals(c.pps, csdPps))) {
-            pipe.obtainMessage(MSG_CFG, c).sendToTarget();     // new SPS -> reconfigure
-        }
+        noteCfg(Arrays.copyOfRange(full, 2, full.length));     // new SPS/PPS -> reconfigure
     }
 
     /** ts_lo + latest meta ts_hi -> monotonic 64-bit timestamp (nearest-wrap rule). */
@@ -285,13 +304,8 @@ public final class RxEngine {
     // ---------------- pipeline thread ----------------
 
     private void onFrame(byte[] au, long ts, boolean idr) {
-        if (!configured) {
-            Cfg c = extractCfg(au);                            // first frame carries SPS/PPS
-            if (c != null && (!Arrays.equals(c.sps, csdSps) || !Arrays.equals(c.pps, csdPps))) {
-                pipe.obtainMessage(MSG_CFG, c).sendToTarget();
-            }
-        }
-        if (waitingIdr && idr) waitingIdr = false;             // first usable frame found
+        noteCfg(au);                                       // in-band SPS/PPS (first frame too)
+        if (waitingIdr && idr) waitingIdr = false;         // first usable frame found
         pipe.obtainMessage(MSG_FRAME, new Frame(au, ts, idr)).sendToTarget();
     }
 
@@ -423,6 +437,8 @@ public final class RxEngine {
         codec = null;
         configured = false;
         waitingIdr = true;
+        csdSps = null;                                           // decoder gone: force reconfig
+        csdPps = null;                                           // when the next SPS pair lands
         inIdx.clear();
         auQ.clear();
         width = 0; height = 0;
@@ -487,7 +503,7 @@ public final class RxEngine {
             i = next;
             if (sps != null && pps != null) break;
         }
-        return sps == null ? null : new Cfg(sps, pps);
+        return (sps == null && pps == null) ? null : new Cfg(sps, pps);
     }
 
     static boolean hasNal(byte[] b, int type) {

@@ -43,9 +43,21 @@ public final class TestCore {
         byte[] spsEmu = hex("6742001F96A2008000000300");  // contains 00 00 03
         byte[] au2 = cat(hex("000001"), spsEmu);
         RxEngine.Cfg c2 = RxEngine.extractCfg(au2);
-        if (c2 == null || !java.util.Arrays.equals(c2.sps, spsEmu)) {
+        if (c2 == null || !java.util.Arrays.equals(c2.sps, spsEmu) || c2.pps != null) {
             fails++; System.out.println("FAIL: extractCfg with 3-byte start code");
-        } else System.out.println("OK  : extractCfg 3-byte start code");
+        } else System.out.println("OK  : extractCfg 3-byte start code, sps-only partial");
+
+        // ---- 4) PPS-only group must yield a partial Cfg (sps==null, pps set)
+        byte[] au3 = cat(hex("00000001"), ppsNal);
+        RxEngine.Cfg c3 = RxEngine.extractCfg(au3);
+        if (c3 == null || c3.sps != null || !java.util.Arrays.equals(c3.pps, ppsNal)) {
+            fails++; System.out.println("FAIL: extractCfg pps-only");
+        } else System.out.println("OK  : extractCfg pps-only partial");
+
+        // ---- 5) plain slice AU has no cfg at all
+        RxEngine.Cfg c4 = RxEngine.extractCfg(hex("0000000165888400112233"));
+        if (c4 != null) { fails++; System.out.println("FAIL: extractCfg slice-only not null"); }
+        else System.out.println("OK  : extractCfg slice-only -> null");
 
         System.out.println(fails == 0 ? "ALL PASS" : (fails + " FAILURES"));
         System.exit(fails == 0 ? 0 : 1);
