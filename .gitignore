@@ -1,0 +1,19 @@
+# build
+build/
+.gradle/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.apk
+local.properties
+CMakeUserPres.json
+CMakeCache.txt
+CMakeFiles/
+out/
+
+# tools/data
+*.pcap
+*.pcapng
+*.mp4
