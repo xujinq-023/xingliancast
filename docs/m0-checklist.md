@@ -6,11 +6,12 @@
 | JDK 17 (Microsoft OpenJDK 17.0.21) | C:\Program Files\Microsoft\jdk-17.0.21.21-hotspot，`JAVA_HOME` 已设 | ✅ `java -version` 通过 |
 | Android SDK（platform-tools / android-34 / build-tools 34） | D:\Dev\Android\Sdk，`ANDROID_HOME` 已设，licenses 已接受 | ✅ `adb version 1.0.41` 通过 |
 | cmdline-tools（sdkmanager/avdmanager） | D:\Dev\Android\cmdline-tools\latest\bin | ✅ 已入 PATH |
-| VS 2022 BuildTools（MSVC + Windows SDK + CMake，VCTools 工作负载） | D:\Dev\VS2022BuildTools | ⏳ 安装中（约 6–7GB） |
-| Wireshark + Npcap | C:\Program Files\Wireshark | ⏳ 排队（BuildTools 之后） |
-| jadx 1.5.0（便携） | D:\Dev\tools\jadx\bin\jadx.bat | ⏳ 排队（最后） |
+| VS 2022 BuildTools（MSVC 14.44 + Windows SDK 10.0.26100 + CMake 3.31，VCTools 工作负载） | D:\Dev\VS2022BuildTools | ✅ C++20 编译-链接-运行冒烟通过（MSVC-OK 42） |
+| Wireshark 4.6.9 + Npcap 1.82（tshark） | C:\Program Files\Wireshark | ✅ `tshark -v` 通过 + 实测抓包 8 帧（winget CDN 卡死 → 官网直连；Npcap 单独装） |
+| jadx 1.5.0（便携） | D:\Dev\tools\jadx\bin\jadx.bat | ✅ `--version` 通过（需 JAVA_HOME，脚本内已处理） |
 
-> 注：Gradle 采用 wrapper 方式（项目内自动下载），暂不安装 Android Studio；CMake/编译器经 VS 的 `LaunchToolsShell`（VsDevCmd）使用，build 脚本会显式调用。
+> 注：Gradle 采用 wrapper 方式（项目内自动下载），暂不安装 Android Studio。
+> 注：本 harness 进程持有旧 PATH（环境变量改动只对新进程生效），**所有构建/工具脚本开头须 source `tools/env.ps1`**（编码阶段第一项交付）。
 
 ## 电视侧（需要你手动操作 — M0 的最终验收）
 1. **开启开发者模式**：智慧屏 设置 → 关于 → 连续点击"版本号"×7（或"设备信息→版本号"），直到提示已进入开发者模式。
@@ -21,7 +22,7 @@
 
 ## 验收通过标准
 - [x] `java -version` / `adb version` / `sdkmanager --list` 正常
-- [ ] `cl.exe` + `cmake --version`（经 VsDevCmd）正常
-- [ ] `tshark -v`、`jadx --version` 正常
+- [x] `cl.exe` + `cmake --version`（经 VsDevCmd）正常 —— C++20 编译+链接+运行 全通过
+- [x] `tshark -v`（4.6.9）、`jadx --version`（1.5.0）正常；Npcap 1.82 已装，以太网口实测抓到 8 包
 - [ ] `adb connect <TV_IP>:5555` 成功且 `adb shell getprop ro.build.version.incremental` 可读
 - [ ] Hello APK `adb install` 成功并在电视上能打开
