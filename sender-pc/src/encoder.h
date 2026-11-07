@@ -20,22 +20,6 @@ class H264Encoder {
   bool Create(int w, int h, int fps, int kbps, bool prefer_hw) {
     w_ = w; h_ = h; fps_ = fps;
     MFT_REGISTER_TYPE_INFO ti{ MFVideoFormat_NV12, MFVideoFormat_H264 };
-    // M2: 只用同步 MFT（软件：MS H.264 等）。NVENC 是异步 MFT，需事件驱动+D3D manager，留 M5。
-    (void)prefer_hw;
-    IMFActivate** acts = nullptr; UINT32 n = 0;
-    HRESULT hr = MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER,
-        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, &ti, &ti, &acts, &n);
-    if (SUCCEEDED(hr) && acts) {
-      for (UINT32 i = 0; i < n && !mft_; i++)
-        acts[i]->ActivateObject(IID_PPV_ARGS(&mft_));
-      for (UINT32 i = 0; i < n; i++) acts[i]->Release();
-      CoTaskMemFree(acts);
-    }
-    if (!mft_) {
-      hr = CoCreateInstance(CLSID_CMSH264EncoderMFT, nullptr, CLSCTX_INPROC_SERVER,
-                            IID_PPV_ARGS(&mft_));
-      if (FAILED(hr)) { printf("enc: 枚举 hr=0x%08lx n=%u, CoCreate 0x%08lx\n", hr, n, hr); return false; }
-    }
 
     auto mkType = [&](GUID sub, bool out) {
       ComPtr<IMFMediaType> t; MFCreateMediaType(&t);
@@ -49,26 +33,52 @@ class H264Encoder {
       else     t->SetUINT32(MF_MT_DEFAULT_STRIDE, (UINT32)w);
       return t;
     };
-    ComPtr<IMFMediaType> it = mkType(MFVideoFormat_NV12, false), ot = mkType(MFVideoFormat_H264, true);
+    // 属性→SetOutputType→SetInputType→START/BEGIN（MS 编码器实测唯一可用顺序）
+    auto negotiate = [&](ComPtr<IMFTransform>& m) -> bool {
+      ComPtr<IMFMediaType> it = mkType(MFVideoFormat_NV12, false), ot = mkType(MFVideoFormat_H264, true);
+      ComPtr<IMFAttributes> at; m->GetAttributes(&at);
+      if (at) {
+        at->SetUINT32(MF_LOW_LATENCY, TRUE);
+        at->SetUINT64(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR);
+        at->SetUINT64(CODECAPI_AVEncCommonMeanBitRate, (UINT64)kbps * 1000);
+        at->SetUINT32(CODECAPI_AVEncCommonLowLatency, TRUE);
+        at->SetUINT32(CODECAPI_AVEncMPVDefaultBPictureCount, 0);
+        at->SetUINT32(CODECAPI_AVEncMPVGOPSize, (UINT32)fps * 2);
+        at->SetUINT32(CODECAPI_AVEncCommonRealTime, TRUE);
+      }
+      if (FAILED(m->SetOutputType(0, ot.Get(), 0))) return false;
+      if (FAILED(m->SetInputType(0, it.Get(), 0))) return false;
+      m->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+      m->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+      mft_ = m;
+      return true;
+    };
+    auto try_enum = [&](DWORD flags, bool hwflag) -> bool {
+      IMFActivate** acts = nullptr; UINT32 n = 0;
+      HRESULT hr = MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, flags, &ti, &ti, &acts, &n);
+      bool got = false;
+      if (SUCCEEDED(hr) && acts) {
+        for (UINT32 i = 0; i < n && !got; i++) {
+          ComPtr<IMFTransform> t;
+          if (SUCCEEDED(acts[i]->ActivateObject(IID_PPV_ARGS(&t))) && negotiate(t)) { got = true; hw_ = hwflag; }
+        }
+        for (UINT32 i = 0; i < n; i++) acts[i]->Release();
+        CoTaskMemFree(acts);
+      }
+      return got;
+    };
 
-    // 低延迟属性须在类型协商期间设置（MS 编码器仅在 SetOutputType 前接受 CODECAPI）
-    ComPtr<IMFAttributes> at; mft_->GetAttributes(&at);
-    if (at) {
-      at->SetUINT32(MF_LOW_LATENCY, TRUE);
-      at->SetUINT64(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR);
-      at->SetUINT64(CODECAPI_AVEncCommonMeanBitRate, (UINT64)kbps * 1000);
-      at->SetUINT32(CODECAPI_AVEncCommonLowLatency, TRUE);
-      at->SetUINT32(CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-      at->SetUINT32(CODECAPI_AVEncMPVGOPSize, (UINT32)fps * 2);
-      at->SetUINT32(CODECAPI_AVEncCommonRealTime, TRUE);
+    // 先试可同步调用的硬编 MFT（NVENC/dxva 多注册为同步可用），失败回退软编；异步 NVENC 完整链路留 M5
+    if (prefer_hw)
+      try_enum(MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, true);
+    if (!mft_)
+      try_enum(MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, false);
+    if (!mft_) {
+      ComPtr<IMFTransform> m;
+      HRESULT hr = CoCreateInstance(CLSID_CMSH264EncoderMFT, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&m));
+      if (FAILED(hr) || !negotiate(m)) { printf("enc: 回退 CoCreate hr=0x%08lx\n", hr); return false; }
+      hw_ = false;
     }
-    hr = mft_->SetOutputType(0, ot.Get(), 0);
-    if (FAILED(hr)) { printf("enc: SetOutputType hr=0x%08lx\n", hr); return false; }
-    hr = mft_->SetInputType(0, it.Get(), 0);
-    if (FAILED(hr)) { printf("enc: SetInputType hr=0x%08lx\n", hr); return false; }
-
-    mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     return true;
   }
 
