@@ -1,6 +1,6 @@
-# PJS 协议规范 v0.2（自研，借鉴乐播设计）
+# PJS 协议规范 v0.3（自研，借鉴乐播设计）
 
-状态：**媒体层已实现并回环实测通过**（sender-pc ↔ 抓包验证 2026-11-07）；discovery/control 为设计稿（M3 实现）。
+状态：**媒体层（视频+音频）已实现**——PC 发送端回环实测通过（2026-11-07，AAC 44.1k/2ch/128k，音包 ~43/s=1024 帧@44100 精确）；TV 接收端已实现待真机 sideload。discovery/control 为设计稿（M3 后半）。
 
 ## 1. 通道总览
 
@@ -23,7 +23,7 @@
 0     2     magic  = 0x50 0x4A  ("PJ")
 2     1     type   : 0=VIDEO, 1=AUDIO, 2=META
 3     1     codec  : 0=H.264, 1=AAC (AUDIO 用)
-4     4     seq    : 自增序号（video/meta 各自独立计数，从 1 起）
+4     4     seq    : 自增序号（video/audio/meta 三条流各自独立计数，从 1 起）
 8     4     ts_lo  : 时间戳低 32 位（微秒，QPC 基准，仅用于相对同步）
 12    1     flags  : bit0 FIRST | bit1 LAST | bit2 IDR | bit3 KEY | bit4 RETR
 13    1     kind   : 0=SLICE, 2=META（CFG=1 预留）
@@ -46,7 +46,14 @@ payload = `[ts_hi u16 大端][SPS+PPS Annex-B 拼接]`，>1200B 分片（FIRST/L
 - 作用：接收端周期性重配解码器（SPS/PPS 冗余下发）。`ts_hi = (ts_us>>16)&0xFFFF` 目前仅作校验参考；时序恢复以 ts_lo + 32 位回绕窗口（周期 71.6 分钟）为准。
 - 实测样例：`a5cf | 00000001 674d…`（ts_hi=u16, 4 字节起始码 SPS nal type 7）。
 
-### 3.4 时间戳
+### 3.4 音频（type=1, codec=1）
+
+- **一包 = 一个完整 AAC 帧，带 7 字节 ADTS 头**（`protection_bit=1` 无 CRC；`frame_length` 含 ADTS 自描述整帧长），不分片、恒置 FIRST|LAST。128 kbps CBR 立体声 1024 样本/帧 ≈ 23.2 ms，单帧 ≤ 768B，远小于 1200B 上限。
+- 版式跟随发送端 MF 编码器协商结果（本参考实现实测 44100 Hz/2ch；ADTS `sampling_frequency_index` 自描述，接收端按其配置）。
+- `ts_lo` = 该帧**采集**起始时间戳（µs，与视频同一 QPC 时基；静音期由 40 ms 静音保活帧维持连续时钟，漂移 >100 ms 时重同步）。AAC 编码器输出有 2 帧固有延迟，属正常，不计入 ts。
+- 接收端解码：`audio/mp4a-latm`，`csd-0` = 2 字节 AudioSpecificConfig（AOT=2 AAC-LC + ADTS 的 freq idx/chan cfg），喂数据时**剥掉 ADTS 头**；丢一包 = 23 ms 音频跳变，AAC 自恢复，无需 IDR 式重同步。
+
+### 3.5 时间戳
 
 QPC 微秒（主机启动起算），仅用于帧间相对时序与音画同步；不要求跨机绝对对齐。
 
