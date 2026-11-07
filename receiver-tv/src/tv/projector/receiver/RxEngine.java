@@ -1,5 +1,8 @@
 package tv.projector.receiver;
 
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;
@@ -18,6 +21,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -38,7 +42,7 @@ public final class RxEngine {
     private static final long IDLE_MS = 30_000L;        // 30s of silence -> listening
 
     private static final int MSG_FRAME = 1, MSG_CFG = 2, MSG_SURFACE = 3, MSG_TICK = 4,
-            MSG_ERR = 5;
+            MSG_ERR = 5, MSG_AUDIO = 6;
 
     public interface UiSink { void onStatus(String text); }
 
@@ -76,6 +80,18 @@ public final class RxEngine {
     private final AtomicLong lostSeq = new AtomicLong();
     private final AtomicLong droppedAu = new AtomicLong();
     private final AtomicLong metaCount = new AtomicLong();
+    private final AtomicLong audioFed = new AtomicLong();
+    private final AtomicLong audioDrop = new AtomicLong();
+
+    // ---- audio path (own "pjs-aud" thread, M3): ADTS -> MediaCodec AAC -> AudioTrack ----
+    private volatile Handler audh;                     // lazy: created on first audio packet
+    private HandlerThread athread;
+    private final AtomicInteger aPend = new AtomicInteger();
+    private long aLastSeq = -1;                        // rx-thread only
+    private volatile long lastAudioMs;
+    private MediaCodec acodec;                         // aud-thread only
+    private AudioTrack atrack;                         // aud-thread only
+    private int aRate, aCh;                            // aud-thread only
     private volatile double fps;
     private long prevFrames;                            // pipe-thread only
 
@@ -122,6 +138,13 @@ public final class RxEngine {
         pipe.post(new Runnable() {
             @Override public void run() { releaseCodec(); thread.quit(); }
         });
+        Handler h = audh;
+        if (h != null) {
+            h.post(new Runnable() {
+                @Override public void run() { releaseAudio(); }
+            });
+            athread.quitSafely();
+        }
     }
 
     // ---------------- rx thread ----------------
@@ -170,7 +193,7 @@ public final class RxEngine {
             if (!running) break;
             lastRxMs = SystemClock.elapsedRealtime();
             peer = got.getAddress() == null ? "?" : got.getAddress().getHostAddress();
-            if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); }
+            if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); aLastSeq = -1; }
             parse(got.getData(), got.getOffset(), got.getLength());
         }
         try { socket.close(); } catch (Throwable ignored) { }
@@ -180,7 +203,7 @@ public final class RxEngine {
         if (len < H) return;
         if (d[off] != 0x50 || d[off + 1] != 0x4A) return;      // magic 'P','J'
         int type = d[off + 2] & 0xFF;
-        if (type != T_VIDEO && type != T_META) return;         // no audio in M2
+        if (type != T_VIDEO && type != T_META && type != T_AUDIO) return;
         long seq = u32(d, off + 4);
         long tslo = u32(d, off + 8);
         int flags = d[off + 12] & 0xFF;
@@ -190,7 +213,8 @@ public final class RxEngine {
         if (plen <= 0) return;
         byte[] payload = Arrays.copyOfRange(d, off + H, off + H + plen);
         if (type == T_VIDEO) stepVideo(seq, tslo, flags, kind, payload);
-        else stepMeta(seq, tslo, flags, payload);
+        else if (type == T_META) stepMeta(seq, tslo, flags, payload);
+        else stepAudio(seq, flags, payload);
     }
 
     /** Video packet -> access-unit reassembly keyed on ts_us. rx thread only.
@@ -289,6 +313,38 @@ public final class RxEngine {
         metaCount.incrementAndGet();
         ts64(tslo);                                            // keep the ts base in sync
         noteCfg(Arrays.copyOfRange(full, 2, full.length));     // new SPS/PPS -> reconfigure
+    }
+
+    /** Audio packets carry exactly one ADTS frame (pjs-spec §3, codec=1): verify seq,
+     *  then hand straight to the audio thread. AAC survives single-frame loss, so no
+     *  waitingIdr-style resync gate is needed. rx thread only. */
+    private void stepAudio(long seq, int flags, byte[] payload) {
+        if (payload.length < 8 || (payload[0] & 0xFF) != 0xFF || (payload[1] & 0xF0) != 0xF0) return;
+        if (aLastSeq >= 0) {
+            int delta = (int) (seq - aLastSeq);
+            if (delta <= 0 && (flags & F_RETR) != 0) return;   // stale retransmit copy
+            if (delta > 1) lostSeq.addAndGet(delta - 1);       // gap = lost AAC frames (play-through)
+        }
+        aLastSeq = seq;
+        lastAudioMs = SystemClock.elapsedRealtime();
+        Handler h = audh;
+        if (h == null) {
+            synchronized (this) {
+                if (audh == null) {
+                    athread = new HandlerThread("pjs-aud");
+                    athread.start();
+                    audh = new Handler(athread.getLooper(), new Handler.Callback() {
+                        @Override public boolean handleMessage(Message m) { onAud(m); return true; }
+                    });
+                }
+                h = audh;
+            }
+        }
+        if (aPend.incrementAndGet() > 120) {                   // >2.8s backlog: flush for latency
+            h.removeMessages(MSG_AUDIO);
+            audioDrop.addAndGet(aPend.getAndSet(1));
+        }
+        h.obtainMessage(MSG_AUDIO, payload).sendToTarget();
     }
 
     /** ts_lo + latest meta ts_hi -> monotonic 64-bit timestamp (nearest-wrap rule). */
@@ -449,6 +505,96 @@ public final class RxEngine {
         postStatus();
     }
 
+    // ---------------- audio thread (ADTS -> AAC-LC decode -> AudioTrack, M3) ----------------
+
+    private static final int[] ADTS_RATES = {96000, 88200, 64000, 48000, 44100,
+            32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
+
+    private void onAud(Message m) {
+        if (m.what != MSG_AUDIO) return;
+        aPend.decrementAndGet();
+        byte[] adts = (byte[]) m.obj;
+        int fi = (adts[2] >> 2) & 0xF;                         // sampling_freq_index
+        int ch = ((adts[2] & 1) << 2) | ((adts[3] >> 6) & 3);  // channel_configuration
+        int rate = fi < 13 ? ADTS_RATES[fi] : 44100;
+        if (ch < 1 || ch > 2) ch = 2;
+        int hdr = (adts[1] & 1) != 0 ? 7 : 9;                  // protection_bit: 1 = no CRC
+        if (acodec == null || rate != aRate || ch != aCh) configureAudio(rate, ch, fi);
+        if (acodec != null && adts.length > hdr) decodeAudio(adts, hdr);
+    }
+
+    private void configureAudio(int rate, int ch, int fi) {
+        releaseAudio();
+        try {
+            // AudioSpecificConfig v1: AOT=2 (AAC-LC) | freq idx | chan cfg
+            byte[] asc = new byte[] { (byte) ((2 << 3) | (fi >> 1)),
+                    (byte) (((fi & 1) << 7) | (ch << 3)) };
+            MediaFormat f = MediaFormat.createAudioFormat("audio/mp4a-latm", rate, ch);
+            f.setInteger(MediaFormat.KEY_CHANNEL_COUNT, ch);
+            f.setByteBuffer("csd-0", ByteBuffer.wrap(asc));
+            MediaCodec c = MediaCodec.createDecoderByType("audio/mp4a-latm");
+            c.configure(f, null, null, 0);
+            c.start();
+            int chMask = ch == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
+            int min = AudioTrack.getMinBufferSize(rate, chMask, AudioFormat.ENCODING_PCM_16BIT);
+            if (min <= 0) min = 8192;
+            AudioTrack t = new AudioTrack(AudioManager.STREAM_MUSIC, rate, chMask,
+                    AudioFormat.ENCODING_PCM_16BIT, min * 4, AudioTrack.MODE_STREAM);
+            t.play();
+            acodec = c; atrack = t; aRate = rate; aCh = ch;
+        } catch (Throwable e) {
+            releaseAudio();
+        }
+        postStatus();
+    }
+
+    /** One ADTS frame in, 1024-sample PCM block out; the blocking AudioTrack.write
+     *  paces this thread, so no PTS scheduling is needed yet (M3.1 will add A/V sync). */
+    private void decodeAudio(byte[] adts, int hdr) {
+        try {
+            int idx = acodec.dequeueInputBuffer(10_000);
+            if (idx >= 0) {
+                ByteBuffer b = acodec.getInputBuffer(idx);
+                if (b != null) {
+                    b.clear();
+                    b.put(adts, hdr, adts.length - hdr);       // ADTS header stripped, ASC in csd-0
+                    acodec.queueInputBuffer(idx, 0, adts.length - hdr, 0, 0);
+                }
+            }
+            MediaCodec.BufferInfo bi = new MediaCodec.BufferInfo();
+            int oi;
+            while ((oi = acodec.dequeueOutputBuffer(bi, 0)) >= 0) {
+                if (bi.size > 0 && atrack != null) {
+                    ByteBuffer ob = acodec.getOutputBuffer(oi);
+                    if (ob != null) {
+                        byte[] pcm = new byte[bi.size];
+                        ob.position(bi.offset);
+                        ob.get(pcm, 0, bi.size);
+                        atrack.write(pcm, 0, bi.size);
+                    }
+                }
+                acodec.releaseOutputBuffer(oi, false);
+                audioFed.incrementAndGet();
+            }
+        } catch (Throwable e) {
+            releaseAudio();
+        }
+    }
+
+    private void releaseAudio() {
+        AudioTrack t = atrack; atrack = null;
+        MediaCodec c = acodec; acodec = null;
+        aRate = 0; aCh = 0;
+        if (t != null) {
+            try { t.stop(); } catch (Throwable ignored) { }
+            try { t.release(); } catch (Throwable ignored) { }
+        }
+        if (c != null) {
+            try { c.stop(); } catch (Throwable ignored) { }
+            try { c.release(); } catch (Throwable ignored) { }
+        }
+    }
+
     private void tick() {
         long n = framesFed.get();
         fps = n - prevFrames;                                  // 1s cadence
@@ -456,6 +602,13 @@ public final class RxEngine {
         boolean streaming = lastRxMs != 0
                 && SystemClock.elapsedRealtime() - lastRxMs < IDLE_MS;
         if (!streaming && configured) releaseCodec();          // 30s silence -> listening
+        Handler h = audh;                                      // audio idles independently
+        if (h != null && lastAudioMs != 0
+                && SystemClock.elapsedRealtime() - lastAudioMs > IDLE_MS) {
+            h.post(new Runnable() {
+                @Override public void run() { releaseAudio(); postStatus(); }
+            });
+        }
         postStatus();
         pipe.sendEmptyMessageDelayed(MSG_TICK, 1000);
     }
@@ -473,7 +626,9 @@ public final class RxEngine {
         long lost = lostSeq.get(), fed = framesFed.get();
         String res = (width > 0 && height > 0) ? (width + "x" + height) : "-";
         String tail = "lost-seq=" + lost + " drop-au=" + droppedAu.get()
-                + " meta=" + metaCount.get() + " res=" + res + (waitingIdr ? " waitIDR" : "");
+                + " meta=" + metaCount.get() + " res=" + res
+                + " aud=" + audioFed.get() + " adrop=" + audioDrop.get()
+                + (waitingIdr ? " waitIDR" : "");
         if (fed == 0) return "listening  udp:" + PORT + "  pc=" + peer + "\n" + tail;
         return "READY pc=" + peer + " fps=" + String.format(Locale.US, "%.1f", fps)
                 + "  fed=" + fed + "\nudp:" + PORT + " " + tail;
