@@ -7,4 +7,4 @@ add_executable(sender src/main.cpp)
 target_compile_definitions(sender PRIVATE UNICODE _UNICODE NOMINMAX WINRT_LEAN_AND_MEAN)
 target_link_libraries(sender PRIVATE
   d3d11 dxgi mfplat mf mfuuid wmcodecdspuuid
-  windowsapp runtimeobject ole32 ws2_32)
+  windowsapp runtimeobject ole32 ws2_32 uuid)

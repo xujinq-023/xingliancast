@@ -21,6 +21,7 @@
 #include <Windows.Graphics.Capture.Interop.h>
 #include "pjs.h"
 #include "encoder.h"
+#include "audio.h"
 
 namespace caps = winrt::Windows::Graphics::Capture;
 namespace gfx  = winrt::Windows::Graphics;
@@ -31,7 +32,7 @@ namespace dx11i = Windows::Graphics::DirectX::Direct3D11;   // interop 头（非
 static std::atomic<bool> g_stop{ false };
 static BOOL WINAPI CtrlHandler(DWORD) { g_stop = true; return TRUE; }
 
-struct Cfg { std::string ip = "10.5.9.22"; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; };
+struct Cfg { std::string ip = "10.5.9.22"; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; bool audio = true; };
 
 static Cfg ParseArgs(int argc, char** argv) {
   Cfg c;
@@ -43,7 +44,10 @@ static Cfg ParseArgs(int argc, char** argv) {
     else if (k == "--fps") c.fps = atoi(v.c_str());
     else if (k == "--height") c.height = atoi(v.c_str());
   }
-  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--sw")) c.hw = false;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "--sw")) c.hw = false;
+    if (!strcmp(argv[i], "--noaudio")) c.audio = false;
+  }
   return c;
 }
 
@@ -120,6 +124,16 @@ int main(int argc, char** argv) {
     H264Encoder enc;
     if (!enc.Create(ew, eh, cfg.fps, cfg.bitrate, cfg.hw)) { printf("H.264 编码器创建失败\n"); return 4; }
     printf("编码器: %s\n", enc.hw() ? "硬件(MFT)" : "软件(MS)");
+
+    // ---------- M3 音频: WASAPI loopback → AAC(128k) → PJS ----------
+    aud::AudioPipe apipe;
+    if (cfg.audio) {
+      apipe.Start(128, [&](const uint8_t* a, size_t n, uint64_t ts) { out.send_audio(a, n, ts); });
+      Sleep(400);
+      if (apipe.started()) printf("音频: loopback+AAC-128k\n");
+      else if (apipe.err() == S_OK) printf("音频: 启动中\n");
+      else printf("音频: 不可用(仅视频) hr=0x%08X\n", (unsigned)apipe.err());
+    }
 
     // ---------- 输出回调 ----------
     LARGE_INTEGER qpf{}; QueryPerformanceFrequency(&qpf);
@@ -210,8 +224,8 @@ int main(int argc, char** argv) {
       }
       if (now - t0 > 1000) {
         double sec = (now - t0) / 1000.0;
-        printf("fps=%.1f 包=%llu 转换=%.1fms 编码=%.1fms\n", frames / sec,
-               (unsigned long long)out.packets(),
+        printf("fps=%.1f 包=%llu 音包=%u 转换=%.1fms 编码=%.1fms\n", frames / sec,
+               (unsigned long long)out.packets(), (unsigned)out.audio_packets(),
                frames ? conv_us / frames / 1000.0 : 0.0,
                frames ? enc_us / frames / 1000.0 : 0.0);
         t0 = now; frames = 0; conv_us = enc_us = 0;

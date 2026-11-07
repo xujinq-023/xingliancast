@@ -113,8 +113,13 @@ class UdpOut {
       off += chunk;
     }
   }
-  uint64_t packets() const { return vseq_ + mseq_; }
+  // 音频: 一包一 ADTS AAC 帧 (spec §3: type=AUDIO codec=1)。仅音频线程调用。
+  void send_audio(const uint8_t* f, size_t n, uint64_t ts_us) {
+    send_raw(packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, SLICE, f, n));
+  }
+  uint64_t packets() const { return vseq_ + mseq_ + aseq_; }
+  uint32_t audio_packets() const { return aseq_; }
  private:
-  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{}; uint32_t vseq_ = 0, mseq_ = 0;
+  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{}; uint32_t vseq_ = 0, mseq_ = 0, aseq_ = 0;
 };
 } // namespace pjs
