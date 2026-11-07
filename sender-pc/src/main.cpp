@@ -18,6 +18,7 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 #include <windows.graphics.directx.direct3d11.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
+#include <Windows.Graphics.Capture.Interop.h>
 #include "pjs.h"
 #include "encoder.h"
 
@@ -25,13 +26,7 @@ namespace caps = winrt::Windows::Graphics::Capture;
 namespace gfx  = winrt::Windows::Graphics;
 namespace gdx  = winrt::Windows::Graphics::DirectX;
 namespace g11  = winrt::Windows::Graphics::DirectX::Direct3D11;
-
-// 未公开的 GraphicsCaptureItem 工厂接口（对主显示器/窗口创建 item）
-struct __declspec(uuid("c0a1d86e-813d-4f46-815d-22ff02056a6b"))
-IGraphicsCaptureItemInterop : IUnknown {
-  virtual HRESULT __stdcall CreateForMonitor(HMONITOR, REFIID, void**);
-  virtual HRESULT __stdcall CreateForWindow(HWND, REFIID, void**);
-};
+namespace dx11i = Windows::Graphics::DirectX::Direct3D11;   // interop 头（非 winrt:: 下）
 
 static std::atomic<bool> g_stop{ false };
 static BOOL WINAPI CtrlHandler(DWORD) { g_stop = true; return TRUE; }
@@ -52,6 +47,7 @@ static Cfg ParseArgs(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  setvbuf(stdout, nullptr, _IONBF, 0);
   SetConsoleOutputCP(65001);
   Cfg cfg = ParseArgs(argc, argv);
   SetConsoleCtrlHandler(CtrlHandler, TRUE);
@@ -60,6 +56,7 @@ int main(int argc, char** argv) {
   if (!out.open(cfg.ip.c_str(), cfg.port)) { printf("UDP 打开失败\n"); return 1; }
   printf("目标 %s:%d  码率 %dkbps  fps %d  偏好%s硬编\n", cfg.ip.c_str(), cfg.port,
          cfg.bitrate, cfg.fps, cfg.hw ? "" : "（禁）");
+  MFStartup(MF_VERSION);
 
   try {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -106,21 +103,29 @@ int main(int argc, char** argv) {
     ComPtr<ID3D11VideoProcessorEnumerator> vpe;
     if (FAILED(vdev->CreateVideoProcessorEnumerator(&vpd, &vpe))) { printf("VP 枚举失败\n"); return 3; }
     ComPtr<ID3D11VideoProcessor> vp;
-    winrt::check_hresult(vdev->CreateVideoProcessor(vpe.Get(), &vp));
+    winrt::check_hresult(vdev->CreateVideoProcessor(vpe.Get(), 0, &vp));
 
     D3D11_TEXTURE2D_DESC nv12desc{};
     nv12desc.Width = w; nv12desc.Height = h; nv12desc.MipLevels = 1; nv12desc.ArraySize = 1;
     nv12desc.Format = DXGI_FORMAT_NV12; nv12desc.SampleDesc.Count = 1;
-    nv12desc.Usage = D3D11_USAGE_DEFAULT; nv12desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    ComPtr<ID3D11Texture2D> nv12tex; dev->CreateTexture2D(&nv12desc, nullptr, &nv12tex);
+    nv12desc.Usage = D3D11_USAGE_DEFAULT;
+    nv12desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    ComPtr<ID3D11Texture2D> nv12tex;
+    HRESULT hr2 = dev->CreateTexture2D(&nv12desc, nullptr, &nv12tex);
+    if (FAILED(hr2)) { fprintf(stderr, "nv12tex hr=0x%08lx\n", hr2); return 3; }
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC ovod{ D3D11_VPOV_DIMENSION_TEXTURE2D, { 0 } };
     ComPtr<ID3D11VideoProcessorOutputView> ov;
-    winrt::check_hresult(vdev->CreateVideoProcessorOutputView(nv12tex.Get(), vpe.Get(), &ovod, &ov));
+    hr2 = vdev->CreateVideoProcessorOutputView(nv12tex.Get(), vpe.Get(), &ovod, &ov);
+    if (FAILED(hr2)) { fprintf(stderr, "outputview hr=0x%08lx\n", hr2); return 3; }
 
     D3D11_TEXTURE2D_DESC stdesc = nv12desc;
+    stdesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;  // staging 用 BGRA（Map 语义无歧义），NV12 转换走 CPU
     stdesc.Usage = D3D11_USAGE_STAGING; stdesc.BindFlags = 0;
     stdesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    ComPtr<ID3D11Texture2D> staging; dev->CreateTexture2D(&stdesc, nullptr, &staging);
+    ComPtr<ID3D11Texture2D> staging;
+    hr2 = dev->CreateTexture2D(&stdesc, nullptr, &staging);
+    if (FAILED(hr2)) { fprintf(stderr, "staging hr=0x%08lx\n", hr2); return 3; }
+    std::vector<uint8_t> yuv((size_t)w * h * 3 / 2);  // CPU 转出的 packed NV12（行距=w）
 
     // ---------- 编码器 ----------
     H264Encoder enc;
@@ -139,7 +144,7 @@ int main(int argc, char** argv) {
       frames++;
     };
 
-    try { session.StartProjection(); } catch (...) {}
+    try { session.StartCapture(); } catch (...) {}
     printf("已推流: 按 Ctrl+C 退出\n");
 
     winrt::handle evt{ CreateEventW(nullptr, FALSE, FALSE, nullptr) };
@@ -153,30 +158,43 @@ int main(int argc, char** argv) {
       WaitForSingleObject(evt.get(), 250);
       while (auto frame = pool.TryGetNextFrame()) {
         auto surface = frame.Surface();
-        ComPtr<IDirect3DDxgiInterfaceAccess> acc;
-        if (SUCCEEDED(surface.as<IDirect3DDxgiInterfaceAccess>(&acc))) {
+        dx11i::IDirect3DDxgiInterfaceAccess* rawacc = nullptr;
+        if (SUCCEEDED(surface.as(__uuidof(dx11i::IDirect3DDxgiInterfaceAccess), (void**)&rawacc))) {
+        ComPtr<dx11i::IDirect3DDxgiInterfaceAccess> acc; acc.Attach(rawacc);
         ComPtr<ID3D11Texture2D> srcTex;
         if (SUCCEEDED(acc->GetInterface(IID_PPV_ARGS(&srcTex)))) {
-          D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC ivd{};
-          ivd.FourCC = 0; ivd.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
-          ComPtr<ID3D11VideoProcessorInputView> iv;
-          if (SUCCEEDED(vdev->CreateVideoProcessorInputView(srcTex.Get(), vpe.Get(), &ivd, &iv))) {
-            vctx->VideoProcessorSetStreamFrameFormat(vp.Get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
-            vctx->VideoProcessorSetOutputColorSpace(vp.Get(), nullptr); // 保持默认 BT709/601 依驱动
-            if (SUCCEEDED(vctx->VideoProcessorBlt(vp.Get(), ov.Get(), 0, 1, nullptr))) {
-              ctx->CopyResource(staging.Get(), nv12tex.Get());
-              D3D11_MAPPED_SUBRESOURCE mp{};
-              if (SUCCEEDED(ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mp))) {
-                LONGLONG t100 = frame.Timestamp();
-                if (t100 <= 0) { LARGE_INTEGER q; QueryPerformanceCounter(&q); t100 = q.QuadPart * 10000000 / qpf.QuadPart; }
-                const uint8_t* yp = (const uint8_t*)mp.pData;
-                const uint8_t* uv = yp + (size_t)mp.DepthPitch;
-                enc.Encode(yp, (int)mp.RowPitch, uv, (int)mp.RowPitch, t100, dur100, first, on_au);
-                ctx->Unmap(staging.Get(), 0);
-                first = false;
+          ctx->CopyResource(staging.Get(), srcTex.Get());   // 同格式 BGRA 拷贝
+          D3D11_MAPPED_SUBRESOURCE mp{};
+          if (SUCCEEDED(ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mp))) {
+            // BGRA → packed NV12（BT.601 limited range），行距 = w
+            const uint8_t* bgra = (const uint8_t*)mp.pData;
+            const int sp = (int)mp.RowPitch;
+            uint8_t* Yp = yuv.data(); uint8_t* UVp = Yp + (size_t)w * h;
+            for (int j = 0; j < h; j += 2) {
+              const uint8_t* r0 = bgra + (size_t)j * sp;
+              const uint8_t* r1 = (j + 1 < h) ? r0 + sp : r0;
+              uint8_t* y0 = Yp + (size_t)j * w; uint8_t* y1 = y0 + w;
+              uint8_t* uv = UVp + (size_t)(j / 2) * w;
+              for (int i = 0; i < w; i++) {
+                const uint8_t* p0 = r0 + i * 4; const uint8_t* p1 = r1 + i * 4;
+                y0[i] = (uint8_t)((((int)(66 * p0[2] + 129 * p0[1] + 25 * p0[0] + 128)) >> 8) + 16);
+                y1[i] = (uint8_t)((((int)(66 * p1[2] + 129 * p1[1] + 25 * p1[0] + 128)) >> 8) + 16);
+                if ((i & 1) == 0 && i + 1 < w) {
+                  int B = (p0[0] + p0[4] + p1[0] + p1[4]) >> 2;
+                  int G = (p0[1] + p0[5] + p1[1] + p1[5]) >> 2;
+                  int R = (p0[2] + p0[6] + p1[2] + p1[6]) >> 2;
+                  uv[i]     = (uint8_t)((((int)(-38 * R - 74 * G + 112 * B + 128)) >> 8) + 128);
+                  uv[i + 1] = (uint8_t)((((int)(94 * R - 88 * G - 6 * B + 128)) >> 8) + 128);
+                }
               }
             }
+            ctx->Unmap(staging.Get(), 0);
+            LONGLONG t100 = (LONGLONG)frame.SystemRelativeTime().count();
+            if (t100 <= 0) { LARGE_INTEGER q; QueryPerformanceCounter(&q); t100 = q.QuadPart * 10000000 / qpf.QuadPart; }
+            enc.Encode(Yp, w, UVp, w, t100, dur100, first, on_au);
+            first = false;
           }
+        }
         }
         frame.Close();
       }
@@ -193,7 +211,7 @@ int main(int argc, char** argv) {
         t0 = now; frames = 0;
       }
     }
-    try { session.StopProjection(); } catch (...) {}
+    try { session.Close(); } catch (...) {}
     printf("退出。共发 %llu 包\n", (unsigned long long)out.packets());
   } catch (winrt::hresult_error& e) {
     printf("WinRT 异常 0x%08lx: %ls\n", (unsigned long)e.code(), e.message().c_str());
