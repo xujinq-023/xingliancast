@@ -43,7 +43,7 @@ class H264Encoder {
         at->SetUINT64(CODECAPI_AVEncCommonMeanBitRate, (UINT64)kbps * 1000);
         at->SetUINT32(CODECAPI_AVEncCommonLowLatency, TRUE);
         at->SetUINT32(CODECAPI_AVEncMPVDefaultBPictureCount, 0);
-        at->SetUINT32(CODECAPI_AVEncMPVGOPSize, (UINT32)fps * 2);
+        at->SetUINT32(CODECAPI_AVEncMPVGOPSize, (UINT32)fps);   // 1s IDR = fast error recovery on lossy WiFi
         at->SetUINT32(CODECAPI_AVEncCommonRealTime, TRUE);
       }
       if (FAILED(m->SetOutputType(0, ot.Get(), 0))) return false;

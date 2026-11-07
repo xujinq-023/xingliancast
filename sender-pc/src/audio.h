@@ -1,14 +1,17 @@
-// M3 音频链路: WASAPI loopback(共享混音) → float32→s16 → MF AAC-LC MFT → ADTS 帧回调
+// M3 音频链路: WASAPI loopback(共享混音) → float32→s16 → fdk-aac(AAC-LC) → ADTS 帧回调
 // protocol/pjs-spec.md §3: type=AUDIO codec=1, 一包一 AAC(ADTS) 帧。独立线程，事件驱动。
+//
+// 为何不用 Windows 自带 MF AAC：确诊三份全量 dump 显示 mfAACEnc.dll 在进程级累计
+// ~150 个编码批(≈3.2s 音频内容)后自身 fastfail(0xc0000409)/堆损坏，与实例年龄、
+// 时间戳连续性、重建频率均无关——换实例救不了（它是 DLL 内全局计数）。
+// fdk-aac(Fraunhofer，静态链接)无 COM、无状态上限，且与乐播同为 Fraunhofer 编码核。
 #pragma once
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
-#include <mfapi.h>
-#include <mfidl.h>
-#include <mftransform.h>
-#include <mferror.h>
 #include <ksmedia.h>
+#include <aacenc_lib.h>
+#include <FDK_audio.h>
 #include <cstdio>
 #include <atomic>
 #include <functional>
@@ -18,23 +21,6 @@
 using Microsoft::WRL::ComPtr;
 
 namespace aud {
-
-// 从 MF AAC 编码器裸输出组装 7B ADTS 头（MPEG-4 AAC-LC）
-inline uint8_t adts_freq_idx(UINT32 rate) {
-  static const UINT32 tab[] = {96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};
-  for (int i = 0; i < 13; i++) if (tab[i] == rate) return (uint8_t)i;
-  return 3;   // 兜底 48k
-}
-inline void adts_header(uint8_t* h, size_t frame_len, UINT32 rate, UINT32 ch) {
-  size_t n = frame_len + 7;
-  uint8_t fi = adts_freq_idx(rate), cf = (uint8_t)(ch & 0x3);
-  h[0] = 0xFF; h[1] = 0xF1;                        // sync12 + MPEG-4 + layer AAC + 无CRC
-  h[2] = (uint8_t)((1 << 6) | (fi << 2) | (cf >> 1));  // profile=01(LC) freq_idx + chan>>1
-  h[3] = (uint8_t)(((cf & 1) << 7) | ((n >> 11) & 0x7));  // chan LSB + frame_len[10:8]
-  h[4] = (uint8_t)((n >> 3) & 0xFF);               // frame_len[7:0]
-  h[5] = (uint8_t)(((n & 0x7) << 5) | (0x1FF >> 7 << 3));  // frame_len[2:0] + fullness[8:7]
-  h[6] = (uint8_t)(((0x1FF & 0x7F) << 1));         // fullness[6:0]=0x1FF(可变) → 0xFC
-}
 
 class AudioPipe {
  public:
@@ -55,128 +41,46 @@ class AudioPipe {
   ~AudioPipe() { Stop(); }
 
  private:
-  // ---------- AAC 编码器（同步 MFT） ----------
-  // 输出版式: payload_type 0=裸 AAC / 1=ADTS / 0xFFFFFFFF=编码器默认
-  static HRESULT MakeAacOut(ComPtr<IMFMediaType>& ot, int kbps, DWORD payload_type) {
-    HRESULT hr = MFCreateMediaType(&ot);
-    if (FAILED(hr)) return hr;
-    ot->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-    ot->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
-    ot->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
-    ot->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000);
-    ot->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-    ot->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)kbps * 1000);
-    if (payload_type != 0xFFFFFFFF) {
-      hr = ot->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, payload_type);
-      if (FAILED(hr)) return hr;
-    }
-    ot->SetUINT32(MF_MT_MPEG2_PROFILE, 2);   // AAC LC
-    return S_OK;
-  }
-
+  // ---------- AAC 编码器（fdk-aac，同步纯 CPU） ----------
   bool OpenEncoder(int kbps) {
-    MFT_REGISTER_TYPE_INFO tiIn{ MFMediaType_Audio, MFAudioFormat_PCM };
-    MFT_REGISTER_TYPE_INFO tiOut{ MFMediaType_Audio, MFAudioFormat_AAC };
-    IMFActivate** acts = nullptr; UINT32 n = 0;
-    HRESULT hr = MFTEnumEx(MFT_CATEGORY_AUDIO_ENCODER,
-        MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER, &tiIn, &tiOut, &acts, &n);
-    if (SUCCEEDED(hr) && acts) {
-      for (UINT32 i = 0; i < n && !mft_; i++) acts[i]->ActivateObject(IID_PPV_ARGS(&mft_));
-      for (UINT32 i = 0; i < n; i++) acts[i]->Release();
-      CoTaskMemFree(acts);
-    }
-    if (!mft_) { err_ = MF_E_NOT_FOUND; return false; }   // 无可用 AAC 编码器（枚举为准，26100 SDK 无 CLSID 头）
-    auto mk_in = [&](UINT32 rate, UINT32 ch) -> ComPtr<IMFMediaType> {
-      ComPtr<IMFMediaType> t; MFCreateMediaType(&t);
-      t->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-      t->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-      t->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, ch);
-      t->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
-      t->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, ch * 2);
-      t->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-      t->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
-      t->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * ch * 2);
-      return t;
-    };
-    std::vector<ComPtr<IMFMediaType>> outs;   // 编码器输出模板全枚举 + 自建 48k/2 兜底
-    for (DWORD i = 0; i < 12 && outs.size() < 8; i++) {
-      ComPtr<IMFMediaType> base;
-      if (FAILED(mft_->GetOutputAvailableType(0, i, &base)) || !base) break;   // MFT 原生枚举（SDK 真名）
-      base->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)kbps * 1000);
-      outs.push_back(base);
-    }
-    { ComPtr<IMFMediaType> o; if (SUCCEEDED(MakeAacOut(o, kbps, 0xFFFFFFFF))) outs.push_back(o); }
-    auto rate_of = [](const ComPtr<IMFMediaType>& t) { UINT32 r = 0; t->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &r); return r; };
-    auto ch_of = [](const ComPtr<IMFMediaType>& t) { UINT32 c = 0; t->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &c); return c; };
-    std::stable_sort(outs.begin(), outs.end(), [&](const ComPtr<IMFMediaType>& a, const ComPtr<IMFMediaType>& b) {
-      auto score = [&](const ComPtr<IMFMediaType>& t) { return (rate_of(t) == 48000 ? 4 : 0) + (ch_of(t) == 2 ? 2 : 0); };
-      return score(a) > score(b);   // 48k/2ch 模板优先（免重采样/下混）
-    });
-    bool neg = false; HRESULT last = MF_E_INVALIDMEDIATYPE;
-    for (size_t oi = 0; oi < outs.size() && !neg; oi++) {
-      auto& ot = outs[oi];
-      UINT32 trate = rate_of(ot), tch = ch_of(ot);
-      if (!trate) trate = 48000; if (!tch) tch = 2;
-      last = mft_->SetOutputType(0, ot.Get(), 0);
-      if (FAILED(last)) continue;
-      ComPtr<IMFMediaType> in1 = mk_in(trate, tch);   // 输入必须与输出模板同 rate/ch
-      last = mft_->SetInputType(0, in1.Get(), 0);
-      if (FAILED(last)) { mft_->SetOutputType(0, nullptr, 0); continue; }
-      neg = true;
-      pay_ = 0xFFFFFFFF; erate_ = trate; ech_ = tch;
-      ComPtr<IMFMediaType> got;   // 以编码器实际版式为准（决定是否自组 ADTS）
-      if (SUCCEEDED(mft_->GetOutputCurrentType(0, &got)) && got) {
-        UINT32 q = 0, r2 = 0, c2 = 0;
-        if (SUCCEEDED(got->GetUINT32(MF_MT_AAC_PAYLOAD_TYPE, &q))) pay_ = q;
-        if (SUCCEEDED(got->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &r2)) && r2) erate_ = r2;
-        if (SUCCEEDED(got->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &c2)) && c2) ech_ = c2;
-      }
-      printf("[audio] AAC 协商 ok: %uHz/%uch payload=%s\n", erate_, ech_,
-             pay_ == 1 ? "ADTS(直发)" : pay_ == 0 ? "raw(自组ADTS)" : "default");
-    }
-    if (!neg) { err_ = last; return false; }
-    mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);   // 标准序：先 BEGIN 后 START_OF_STREAM
-    mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+    HANDLE_AACENCODER h = nullptr;
+    AACENC_ERROR e = aacEncOpen(&h, 0, ech_);   // 2ch（Run 已把采集重采样到 erate_ 立体声）
+    if (e != AACENC_OK || !h) { err_ = (HRESULT)e; return false; }
+    aacEncoder_SetParam(h, AACENC_AOT, (int)AOT_AAC_LC);
+    aacEncoder_SetParam(h, AACENC_BITRATE, (UINT)kbps * 1000u);
+    aacEncoder_SetParam(h, AACENC_SAMPLERATE, erate_);
+    // 关键：fdk v3.0.0 默认 userChannelMode=MODE_UNKNOWN，而 AdjustEncSettings
+    // 对查表结果无 NULL 防护（aacenc_lib.cpp L892-893）→ 不设 CHANNELMODE
+    // 则首次 aacEncEncode(含 start call) 必现 AV read addr=4（已独立复现）。
+    e = aacEncoder_SetParam(h, AACENC_CHANNELMODE, (ech_ == 2) ? 2u /*MODE_2*/ : 1u /*MODE_1*/);
+    if (e != AACENC_OK) { aacEncClose(&h); err_ = (HRESULT)e; return false; }
+    aacEncoder_SetParam(h, AACENC_TRANSMUX, (UINT)TT_MP4_ADTS);   // 直接输出 ADTS 帧
+    // 启动流（NULL 缓冲 = 初始化，吃掉编码器 priming 延迟）
+    e = aacEncEncode(h, nullptr, nullptr, nullptr, nullptr);
+    if (e != AACENC_OK) { aacEncClose(&h); err_ = (HRESULT)e; return false; }
+    enc_ = h;
+    printf("[audio] fdk-aac 就绪: AAC-LC %uHz/%uch %dkbps → ADTS\n", erate_, ech_, kbps);
     return true;
   }
 
-  void EncodePcm(const int16_t* pcm, size_t frames, uint64_t ts_us) {
-    const size_t bytes = frames * ech_ * 2;
-    ComPtr<IMFSample> sp; ComPtr<IMFMediaBuffer> mb;
-    if (FAILED(MFCreateSample(&sp)) || FAILED(MFCreateMemoryBuffer((DWORD)bytes, &mb))) return;
-    BYTE* d = nullptr; if (FAILED(mb->Lock(&d, nullptr, nullptr))) return;
-    memcpy(d, pcm, bytes); mb->Unlock();
-    mb->SetCurrentLength((DWORD)bytes);
-    sp->AddBuffer(mb.Get());
-    LONGLONG t = (LONGLONG)ts_us * 10;              // µs→100ns
-    sp->SetSampleTime(t); sp->SetSampleDuration((LONGLONG)frames * 10000000 / erate_);
-    if (FAILED(mft_->ProcessInput(0, sp.Get(), 0))) return;
-    for (int guard = 0; guard < 4; guard++) {
-      ComPtr<IMFSample> os; ComPtr<IMFMediaBuffer> ob;
-      MFCreateSample(&os); MFCreateMemoryBuffer(8192, &ob);
-      ob->SetCurrentLength(8192);
-      os->AddBuffer(ob.Get());
-      MFT_OUTPUT_DATA_BUFFER od{}; od.pSample = os.Get();
-      DWORD st = 0;
-      HRESULT hr = mft_->ProcessOutput(0, 1, &od, &st);
-      ComPtr<IMFSample> done; done.Attach(od.pSample); od.pSample = nullptr;
-      if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT || FAILED(hr)) return;
-      ComPtr<IMFMediaBuffer> b2;
-      if (done && SUCCEEDED(done->GetBufferByIndex(0, &b2))) {
-        BYTE* p = nullptr; DWORD len = 0;
-        if (SUCCEEDED(b2->Lock(&p, nullptr, &len)) && len > 0 && len <= 7618) {
-          if (pay_ == 1) {                 // 编码器已输出 ADTS：直发
-            on_(p, len, ts_us);
-          } else {                         // raw AAC：自组 7B ADTS 头（须在 Unlock 前取数）
-            std::vector<uint8_t> f(7 + len);
-            adts_header(f.data(), len, erate_, ech_);
-            memcpy(f.data() + 7, p, len);
-            b2->Unlock();
-            on_(f.data(), f.size(), ts_us);
-          }
-        } else if (p) b2->Unlock();
-      }
+  // 一帧 = 1024 立体声样本 s16；fdk 稳定态下输入 1 帧 ⇒ 输出恰好 1 个 ADTS 帧
+  bool EncodePcm(const int16_t* pcm, size_t frames, uint64_t ts_us) {
+    if (!enc_ || !pcm || !frames) return false;
+    INT in_bytes = (INT)(frames * ech_ * 2);
+    void* inb = (void*)pcm; void* outb = obuf_.data();
+    INT iid = IN_AUDIO_DATA, isz = in_bytes, iel = 2;
+    INT oid = OUT_BITSTREAM_DATA, osz = (INT)obuf_.size(), oel = 1;
+    AACENC_BufDesc ind{ 1, &inb, &iid, &isz, &iel };
+    AACENC_BufDesc outd{ 1, &outb, &oid, &osz, &oel };
+    AACENC_InArgs ia{ (INT)(frames * ech_), 0 };
+    AACENC_OutArgs oa{};
+    AACENC_ERROR e = aacEncEncode(enc_, &ind, &outd, &ia, &oa);
+    if (e != AACENC_OK) {
+      if (++enc_err_ <= 3) printf("[audio] fdk 编码失败 err=0x%x\n", (unsigned)e);
+      return false;
     }
+    if (oa.numOutBytes > 0) { on_(obuf_.data(), (size_t)oa.numOutBytes, ts_us); enc_err_ = 0; }
+    return true;
   }
 
   // ---------- WASAPI loopback 采集 ----------
@@ -184,8 +88,8 @@ class AudioPipe {
     HRESULT hr0 = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     OnScopeExit co{ [hr0] { if (SUCCEEDED(hr0)) CoUninitialize(); } };
     if (FAILED(hr0)) { err_ = hr0; return; }
-    if (FAILED(MFStartup(MF_VERSION))) { err_ = E_FAIL; return; }
-    if (!OpenEncoder(kbps)) { MFShutdown(); return; }
+    OnScopeExit fin{ [this] { if (enc_) { aacEncClose(&enc_); enc_ = nullptr; } } };
+    if (!OpenEncoder(kbps)) { /* 编码器不可用：继续采集但不喂音频，由 err_ 汇报 */ }
 
     ComPtr<IMMDeviceEnumerator> en; ComPtr<IMMDevice> dev;
     ComPtr<IAudioClient> cli; ComPtr<IAudioCaptureClient> cap;
@@ -209,9 +113,9 @@ class AudioPipe {
     if (SUCCEEDED(hr0)) hr0 = cli->GetService(IID_PPV_ARGS(&cap));
     UINT32 bufframes = 0;
     if (SUCCEEDED(hr0)) hr0 = cli->GetBufferSize(&bufframes);
-    if (FAILED(hr0)) { err_ = hr0; MFShutdown(); return; }
+    if (FAILED(hr0)) { err_ = hr0; return; }
 
-    if (FAILED(cli->Start())) { err_ = E_FAIL; MFShutdown(); return; }
+    if (FAILED(cli->Start())) { err_ = E_FAIL; return; }
     started_ = true;
 
     LARGE_INTEGER qpf{}; QueryPerformanceFrequency(&qpf);
@@ -264,8 +168,15 @@ class AudioPipe {
         pcm.insert(pcm.end(), (size_t)(0.04 * erate_) * ech_, (int16_t)0);
       }
       uint64_t qnow = qpc_us();
-      if (!nts || nts + 100000 < qnow || nts > qnow + 100000) nts = qnow;   // 与 QPC(=视频钟)偏差>100ms 时校正
+      // 时间戳严格连续 +21.3ms/批（仅首批取 qnow），无声期 ts 落后实时无碍
+      // （硬解按流序播放；A/V sync 由 M3.1 统一管理）。
+      if (!nts) nts = qnow;
       while (pcm.size() - carry >= 1024 * ech_) {
+        if (!enc_) {                              // 编码器不可用：丢弃批但保持时间戳前进
+          carry += 1024 * ech_;
+          nts += 1024ULL * 1000000 / erate_;
+          continue;
+        }
         EncodePcm(pcm.data() + carry, 1024, nts);
         nts += 1024ULL * 1000000 / erate_;
         carry += 1024 * ech_;
@@ -273,15 +184,15 @@ class AudioPipe {
       if (carry > 4096 * ech_) { pcm.erase(pcm.begin(), pcm.begin() + (long)carry); carry = 0; }
     }
     cli->Stop();
-    MFShutdown();
   }
 
   struct OnScopeExit { std::function<void()> f; ~OnScopeExit() { f(); } };
 
   Fn on_;
-  ComPtr<IMFTransform> mft_;
-  DWORD pay_ = 0;
-  UINT32 erate_ = 48000, ech_ = 2;   // 协商出的编码器版式
+  HANDLE_AACENCODER enc_ = nullptr;
+  int enc_err_ = 0;
+  std::vector<uint8_t> obuf_ = std::vector<uint8_t>(2048);   // ADTS 输出缓冲（单帧 AAC 上限 << 2048）
+  UINT32 erate_ = 48000, ech_ = 2;      // 编码版式固定 48k/立体声（采集端重采样对齐）
   std::thread thr_;
   std::atomic<bool> stop_{ false }, started_{ false };
   HRESULT err_ = S_OK;

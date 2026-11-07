@@ -85,7 +85,9 @@ class UdpOut {
   void send_au(const uint8_t* au, size_t n, uint64_t ts_us, bool key, bool idr) {
     auto nals = split_nals(au, n);
     std::vector<NalSpan*> seqn;
-    for (auto& s : nals) if (s.type <= 23) seqn.push_back(&s);   // 跳过 AUD/SEI 之外的非标? 保留 1-23
+    // 只发 slice NAL(1/5)：SPS/PPS 由 META 承载（§3）。config NAL 若独立成组，
+    // 接收端会把它当同 ts 的独立 AU 喂解码器 → 低延迟硬解输出垃圾帧 + PTS 重复。
+    for (auto& s : nals) if (s.type == 1 || s.type == 5) seqn.push_back(&s);   // 跳过 AUD/SEI 之外的非标? 保留 1-23
     for (size_t i = 0; i < seqn.size(); i++) {
       auto& s = *seqn[i];
       bool first = i == 0, last = i + 1 == seqn.size();
@@ -96,7 +98,11 @@ class UdpOut {
         size_t chunk = s.len - off > MAX_PAYLOAD ? MAX_PAYLOAD : s.len - off;
         bool cfirst = off == 0, clast = off + chunk >= s.len;
         uint8_t fl = base; if (seqn.size() > 1 || chunk < s.len) { fl = (base & ~uint8_t(FIRST)) | (cfirst ? FIRST : 0) | (clast ? LAST : 0); }
-        send_raw(packet(VIDEO, 0, ++vseq_, ts_us, fl, SLICE, au + s.off + off, chunk));
+        auto pkt = packet(VIDEO, 0, ++vseq_, ts_us, fl, SLICE, au + s.off + off, chunk);
+        send_raw(pkt);
+        // IDR 基准帧免费多发一份(同 seq+RETR)：WiFi 突发丢包不再报废整个 IDR，
+        // 接收端按 stale-retransmit 自动去重（stepVideo delta<=0&&RETR）。
+        if (key) { pkt[12] = (uint8_t)(pkt[12] | RETR); send_raw(pkt); }
         off += chunk;
       }
     }

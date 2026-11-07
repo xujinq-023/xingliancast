@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
     printf("编码器: %s\n", enc.hw() ? "硬件(MFT)" : "软件(MS)");
 
     // ---------- M3 音频: WASAPI loopback → AAC(128k) → PJS ----------
+    LARGE_INTEGER qpf{}; QueryPerformanceFrequency(&qpf);   // 必须先于音频 lambda 声明（&qpf 按引用捕获）
     aud::AudioPipe apipe;
     if (cfg.audio) {
       apipe.Start(128, [&](const uint8_t* a, size_t n, uint64_t ts) { out.send_audio(a, n, ts); });
@@ -136,7 +137,6 @@ int main(int argc, char** argv) {
     }
 
     // ---------- 输出回调 ----------
-    LARGE_INTEGER qpf{}; QueryPerformanceFrequency(&qpf);
     std::vector<uint8_t> cfg_sps;      // SPS/PPS（Annex-B）供 meta
     uint64_t frames = 0, t0 = GetTickCount64();
     auto on_au = [&](const uint8_t* au, size_t n, bool key, bool idr) {
@@ -228,6 +228,7 @@ int main(int argc, char** argv) {
                (unsigned long long)out.packets(), (unsigned)out.audio_packets(),
                frames ? conv_us / frames / 1000.0 : 0.0,
                frames ? enc_us / frames / 1000.0 : 0.0);
+        fflush(stdout);
         t0 = now; frames = 0; conv_us = enc_us = 0;
       }
     }
