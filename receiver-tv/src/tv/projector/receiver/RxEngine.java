@@ -232,8 +232,10 @@ public final class RxEngine {
             if (delta != 1) {
                 if (delta > 1) {                               // lost packets in between
                     lostSeq.addAndGet(delta - 1);
-                    a.reset();
-                    waitingIdr = true;                         // drop half frames, wait IDR
+                    a.reset();                                 // drop only the partial AU.
+                    // NO waitingIdr: HW decoders error-conceal P frames, so the next
+                    // complete P frame keeps the picture moving (brief artifacts on
+                    // burst loss instead of freezing a whole GOP waiting for IDR).
                 }
                 if (!first) return;                            // mid-group after a hole
             }
@@ -361,6 +363,10 @@ public final class RxEngine {
 
     private void onFrame(byte[] au, long ts, boolean idr) {
         noteCfg(au);                                       // in-band SPS/PPS (first frame too)
+        // Defensive (old senders): config-only groups (SPS/PPS, no VCL NAL) never get
+        // fed — low-latency HW decoders echo garbage frames for them. SPS/PPS arrive
+        // via META; feeding slices is all the decoder needs.
+        if (!hasNal(au, 1) && !hasNal(au, 5)) return;
         if (waitingIdr && idr) waitingIdr = false;         // first usable frame found
         pipe.obtainMessage(MSG_FRAME, new Frame(au, ts, idr)).sendToTarget();
     }
