@@ -16,9 +16,14 @@ final class Sps {
             s.levelIdc = br.u(8);
             br.ue();                                        // seq_parameter_set_id
             int chroma = 1;
-            if (s.profileIdc == 66 || s.profileIdc == 77 || s.profileIdc == 88
-                    || s.profileIdc == 100 || s.profileIdc == 110 || s.profileIdc == 122
-                    || s.profileIdc == 244) {
+            // H.264 7.3.2.1.1: these fields ONLY for High-family profiles.
+            // 66/77/88 (Baseline/Main/Extended) must NOT read chroma_format_idc
+            // — doing so misaligns every later field (Main SPS parsed as 16x512).
+            if (s.profileIdc == 100 || s.profileIdc == 110 || s.profileIdc == 122
+                    || s.profileIdc == 244 || s.profileIdc == 44
+                    || s.profileIdc == 83 || s.profileIdc == 86 || s.profileIdc == 118
+                    || s.profileIdc == 128 || s.profileIdc == 138 || s.profileIdc == 139
+                    || s.profileIdc == 134 || s.profileIdc == 135) {
                 chroma = br.ue();                           // chroma_format_idc
                 if (chroma == 3) br.u(1);                   // separate_colour_plane_flag
                 br.ue();                                    // bit_depth_luma_minus8

@@ -10,9 +10,10 @@ public final class TestCore {
     public static void main(String[] a) {
         int fails = 0;
 
-        // ---- 1) baseline SPS vector (python bit-writer verified): 120x16 mbs,
-        //         68 map units, fmo=1, crop bottom=4 (4:2:0) -> 1920x1080
-        byte[] spsNal = hex("67420028ACF01E00897940");
+        // ---- 1) High-profile SPS vector (python bit-writer verified): 120x16 mbs,
+        //         68 map units, fmo=1, crop bottom=4 (4:2:0) -> 1920x1080.
+        //         profile 0x64=100 (High): carries chroma_format_idc as laid out here.
+        byte[] spsNal = hex("67640028ACF01E00897940");
         RxEngine.Cfg just = null;
         Sps s = Sps.parse(spsNal);
         if (s == null) { fails++; System.out.println("FAIL: Sps.parse returned null"); }
@@ -20,6 +21,16 @@ public final class TestCore {
             fails++;
             System.out.println("FAIL: Sps w/h = " + s.width + "x" + s.height + " expected 1920x1080");
         } else System.out.println("OK  : Sps 1920x1080 profile=" + s.profileIdc + " level=" + s.levelIdc);
+
+        // ---- 1b) real mfh264enc Main-profile SPS (live capture 2026-11-08):
+        //         profile 77 must NOT consume chroma_format_idc (old parser read it
+        //         and mis-sized this very stream as 16x512 -> all-green TV picture).
+        Sps s1b = Sps.parse(hex("674D403395A00A002D6840000003004000001E03682211A8"));
+        if (s1b == null || s1b.width != 2560 || s1b.height != 1440) {
+            fails++;
+            System.out.println("FAIL: Main SPS = " + (s1b == null ? "null" : s1b.width + "x" + s1b.height)
+                    + " expected 2560x1440");
+        } else System.out.println("OK  : Main SPS 2560x1440 profile=" + s1b.profileIdc);
 
         // ---- 2) Annex-B AU with SPS+PPS+IDR slice -> extractCfg must find both NALs
         byte[] ppsNal = hex("68CE4280");
