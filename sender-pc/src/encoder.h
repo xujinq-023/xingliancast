@@ -108,14 +108,18 @@ class H264Encoder {
     if (FAILED(hrIn)) return false;
 
     for (int guard = 0; guard < 8; guard++) {
+      // 预分配 output sample 并 Detach：所有权整体移交 ProcessOutput。
+      // mfh264enc 在 NEED_MORE_INPUT 会释放 caller sample，ComPtr 双 Release
+      // 导致 heap-UAF（ASan 实锤）；Detach 后只剩 MFT/caller 链一份引用。
       ComPtr<IMFSample> os; MFCreateSample(&os);
       ComPtr<IMFMediaBuffer> ob; MFCreateMemoryBuffer(1 << 23, &ob);  // 8MB：2K IDR 可达数 MB，过小 MS 编码器会直接 AV
       os->AddBuffer(ob.Get());
-      MFT_OUTPUT_DATA_BUFFER od{}; od.dwStreamID = 0; od.pSample = os.Get();
+      MFT_OUTPUT_DATA_BUFFER od{}; od.dwStreamID = 0; od.pSample = os.Detach();
       DWORD st = 0;
       HRESULT hr = mft_->ProcessOutput(0, 1, &od, &st);
-      // Contract: output sample ownership transfers to caller; Attach takes that one release.
+      // Contract: od.pSample 无论成败均归 caller；Attach 认领那一次引用。
       ComPtr<IMFSample> done; done.Attach(od.pSample); od.pSample = nullptr;
+      if (od.pEvents) { od.pEvents->Release(); od.pEvents = nullptr; }
       if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) break;
       if (FAILED(hr)) break;
       ComPtr<IMFMediaBuffer> b2;
