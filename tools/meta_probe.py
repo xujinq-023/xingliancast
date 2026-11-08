@@ -14,6 +14,7 @@ FIRST, LAST = 1, 2
 meta_groups = {}   # key: tslo or seq-of-LAST -> (payload, complete)
 metas = []         # complete meta payloads
 vid_first = vid_last = 0
+vid_idr = vid_key = 0
 vid_gaps = 0
 seq_seen = {}
 
@@ -42,8 +43,10 @@ while time.time() - t0 < secs:
         seq_seen['v'] = vseq
         if flags & 1: vid_first += 1
         if flags & 2: vid_last += 1
+        if flags & 4: vid_idr += 1          # IDR-flagged packets
+        elif flags & 8: vid_key += 1        # KEY-flagged (non-IDR)
 
-print(f'metas={len(metas)} vid_first={vid_first} vid_last={vid_last} seq_gaps={vid_gaps}')
+print(f'metas={len(metas)} vid_first={vid_first} vid_last={vid_last} seq_gaps={vid_gaps} vid_idr_pkts={vid_idr} vid_key_pkts={vid_key}')
 if not metas:
     print('NO META PACKETS!'); sys.exit(1)
 

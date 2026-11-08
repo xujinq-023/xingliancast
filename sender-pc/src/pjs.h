@@ -100,9 +100,10 @@ class UdpOut {
         uint8_t fl = base; if (seqn.size() > 1 || chunk < s.len) { fl = (base & ~uint8_t(FIRST)) | (cfirst ? FIRST : 0) | (clast ? LAST : 0); }
         auto pkt = packet(VIDEO, 0, ++vseq_, ts_us, fl, SLICE, au + s.off + off, chunk);
         send_raw(pkt);
-        // IDR 基准帧免费多发一份(同 seq+RETR)：WiFi 突发丢包不再报废整个 IDR，
-        // 接收端按 stale-retransmit 自动去重（stepVideo delta<=0&&RETR）。
-        if (key) { pkt[12] = (uint8_t)(pkt[12] | RETR); send_raw(pkt); }
+        // 每个视频包免费多发一份(同 seq+RETR)：WiFi 突发丢包不再报废 AU——
+        // 单包 P 帧丢 0.7% 是参考链漂移(半屏绿噪)的主因，双发后残损率≈0.7%²。
+        // 接收端按 delta<=0 自动去重（stepVideo）。
+        pkt[12] = (uint8_t)(pkt[12] | RETR); send_raw(pkt);
         off += chunk;
       }
     }

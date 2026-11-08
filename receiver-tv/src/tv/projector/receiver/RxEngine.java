@@ -11,6 +11,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.Surface;
 
 import java.io.ByteArrayOutputStream;
@@ -38,6 +39,7 @@ public final class RxEngine {
     private static final int H = 16;
     private static final int F_FIRST = 1, F_LAST = 2, F_IDR = 4, F_KEY = 8, F_RETR = 16;
     private static final int T_VIDEO = 0, T_AUDIO = 1, T_META = 2;
+    private static final String TAG = "pjs-rx";
     private static final int MAX_AU = 1 << 20;          // 1 MiB per access unit cap
     private static final long IDLE_MS = 30_000L;        // 30s of silence -> listening
 
@@ -82,6 +84,7 @@ public final class RxEngine {
     private final AtomicLong metaCount = new AtomicLong();
     private final AtomicLong audioFed = new AtomicLong();
     private final AtomicLong audioDrop = new AtomicLong();
+    private final AtomicLong fedIdr = new AtomicLong();
 
     // ---- audio path (own "pjs-aud" thread, M3): ADTS -> MediaCodec AAC -> AudioTrack ----
     private volatile Handler audh;                     // lazy: created on first audio packet
@@ -107,8 +110,9 @@ public final class RxEngine {
         ByteArrayOutputStream buf;
         long curTs = -1;
         boolean idr;
+        boolean done;                                       // LAST seen: AU waits for ts boundary
 
-        void reset() { lastSeq = -1; tracked = false; buf = null; curTs = -1; idr = false; }
+        void reset() { lastSeq = -1; tracked = false; buf = null; curTs = -1; idr = false; done = false; }
     }
 
     public RxEngine(UiSink sink) {
@@ -226,17 +230,32 @@ public final class RxEngine {
     private void stepVideo(long seq, long tslo, int flags, int kind, byte[] payload) {
         boolean first = (flags & F_FIRST) != 0, last = (flags & F_LAST) != 0;
         Asm a = vAsm;
+        // LAST terminates each NAL, NOT the AU: the sender emits every NAL of a frame as
+        // its own FIRST|LAST mini-group sharing one ts (loopback probe: IDR AU = 2 slice
+        // NALs, nals=[5,5]). Feeding a trailing slice standalone makes VOMX log
+        // "get Error Frame" on every output and paints green noise below the slice row.
+        // The whole AU is delivered at the ts boundary instead.
+        if (a.buf != null && a.done && tslo != a.curTs) {
+            byte[] au = a.buf.toByteArray();
+            boolean idr = a.idr;
+            a.buf = null; a.done = false;
+            onFrame(au, ts64(a.curTs), idr || hasNal(au, 5));
+        }
         if (a.tracked) {
             int delta = (int) (seq - a.lastSeq);               // correct across 32-bit wrap
-            if (delta <= 0 && (flags & F_RETR) != 0) return;   // stale retransmit copy
+            if (delta <= 0) return;                           // late dup: RETR copy or reordered
+                                                              // original. Out-of-order originals must
+                                                              // NOT append: they land out of position
+                                                              // inside the open group (corrupt AU →
+                                                              // green-noise frames on the TV).
             if (delta != 1) {
-                if (delta > 1) {                               // lost packets in between
-                    lostSeq.addAndGet(delta - 1);
-                    a.reset();                                 // drop only the partial AU.
-                    // NO waitingIdr: HW decoders error-conceal P frames, so the next
-                    // complete P frame keeps the picture moving (brief artifacts on
-                    // burst loss instead of freezing a whole GOP waiting for IDR).
-                }
+                if (delta > 1 && a.buf != null) {              // reordering skew: sender burst + WiFi
+                    a.reset();                                 // reorders; drop the partial AU, NOT
+                    a.lastSeq = seq;                           // a real loss and NOT waitingIdr —
+                    a.tracked = true;                          // counting skew as loss starved the
+                    return;                                    // decoder (drop-au 354 / lost-seq 0
+                }                                              // → half-screen green noise).
+                if (delta > 1) lostSeq.addAndGet(delta - 1);   // real hole (AU already closed)
                 if (!first) return;                            // mid-group after a hole
             }
         } else if (!first) {
@@ -249,9 +268,18 @@ public final class RxEngine {
             a.curTs = tslo;
             a.idr = false;
         } else if (a.buf == null || tslo != a.curTs) {
-            a.reset(); waitingIdr = true; return;              // interleaved ts: not our group
+            // Orphan mid/last packet: its group was already completed (RETR copy tail or
+            // reordered original of a KEY AU — sender sends every KEY packet twice) or it
+            // belongs to a foreign ts. Nothing to append to: advance lastSeq, drop quietly,
+            // and do NOT wait for IDR. Only a decoder (re)config needs a fresh IDR;
+            // starving P frames on orphans froze delivery at ~5% (drop-au 34884).
+            a.buf = null; a.done = false;                      // stale partial AU from foreign ts
+            a.lastSeq = seq;
+            a.tracked = true;
+            return;
         }
         if (a.buf.size() + payload.length > MAX_AU) {          // oversized: drop, wait IDR
+            Log.w(TAG, "resync AU>1MB size=" + a.buf.size());
             a.reset(); waitingIdr = true; droppedAu.incrementAndGet(); return;
         }
         a.buf.write(payload, 0, payload.length);
@@ -260,10 +288,7 @@ public final class RxEngine {
         a.tracked = true;
 
         if (last) {
-            byte[] au = a.buf.toByteArray();
-            boolean idr = a.idr;
-            a.buf = null;
-            onFrame(au, ts64(tslo), idr || hasNal(au, 5));     // NAL scan as flag fallback
+            a.done = true;                                     // deliver at next ts boundary
         }
     }
 
@@ -342,7 +367,7 @@ public final class RxEngine {
                 h = audh;
             }
         }
-        if (aPend.incrementAndGet() > 120) {                   // >2.8s backlog: flush for latency
+        if (aPend.incrementAndGet() > 10) {                    // >210ms backlog: flush for latency
             h.removeMessages(MSG_AUDIO);
             audioDrop.addAndGet(aPend.getAndSet(1));
         }
@@ -376,9 +401,30 @@ public final class RxEngine {
             case MSG_FRAME: {
                 Frame f = (Frame) m.obj;
                 if (!configured) break;
+                // Merge same-ts groups before feeding. The sender emits EACH NAL of a
+                // multi-NAL AU as its own FIRST|LAST mini-group sharing one ts; the
+                // software MFT encodes IDR pictures as 2 slice NALs (loopback probe:
+                // nals=[5,5]). Feeding slice 2 standalone breaks the reference chain
+                // below its boundary — TV showed a clean top band + green-noise bottom.
+                Frame prev = auQ.peekLast();
+                if (prev != null && prev.ts == f.ts
+                        && prev.au.length + f.au.length <= MAX_AU) {
+                    byte[] j = new byte[prev.au.length + f.au.length];
+                    System.arraycopy(prev.au, 0, j, 0, prev.au.length);
+                    System.arraycopy(f.au, 0, j, prev.au.length, f.au.length);
+                    auQ.pollLast();
+                    f = new Frame(j, f.ts, prev.idr || f.idr);
+                }
                 if (waitingIdr && !f.idr) { droppedAu.incrementAndGet(); break; }
-                if (f.idr) waitingIdr = false;
-                if (auQ.size() >= 60) auQ.clear();             // overflow safety valve
+                if (f.idr) {
+                    if (waitingIdr) Log.i(TAG, "IDR recovered, drop=" + droppedAu.get());
+                    waitingIdr = false;
+                    fedIdr.incrementAndGet();
+                }
+                if (auQ.size() >= 60) {
+                    Log.w(TAG, "auQ overflow clear size=" + auQ.size() + " fed=" + framesFed.get());
+                    auQ.clear();                             // overflow safety valve
+                }
                 auQ.add(f);
                 pump();
                 break;
@@ -394,6 +440,7 @@ public final class RxEngine {
                 break;
             }
             case MSG_ERR:
+                Log.w(TAG, "MSG_ERR: releasing codec for reconfig");
                 releaseCodec();
                 break;
             case MSG_TICK:
@@ -417,6 +464,7 @@ public final class RxEngine {
                 c.queueInputBuffer(idx, 0, f.au.length, f.ts, 0);
                 framesFed.incrementAndGet();
             } catch (Throwable e) {
+                Log.w(TAG, "feed failed len=" + f.au.length, e);
                 pipe.sendEmptyMessage(MSG_ERR);
                 return;
             }
@@ -468,6 +516,7 @@ public final class RxEngine {
                         }
                     }
                     @Override public void onError(MediaCodec mc, MediaCodec.CodecException e) {
+                        Log.w(TAG, "codec error", e);
                         pipe.sendEmptyMessage(MSG_ERR);
                     }
                     @Override public void onOutputFormatChanged(MediaCodec mc, MediaFormat format) {
@@ -544,8 +593,11 @@ public final class RxEngine {
             int chMask = ch == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
             int min = AudioTrack.getMinBufferSize(rate, chMask, AudioFormat.ENCODING_PCM_16BIT);
             if (min <= 0) min = 8192;
+            // min*4 (≈0.8s TV buffer) + blocking-write pacing = the reported ~3s audio
+            // lag. Real-time stream: keep the hardware buffer small; underruns are
+            // preferable to latency (M3.1 resync will cover rare gaps).
             AudioTrack t = new AudioTrack(AudioManager.STREAM_MUSIC, rate, chMask,
-                    AudioFormat.ENCODING_PCM_16BIT, min * 4, AudioTrack.MODE_STREAM);
+                    AudioFormat.ENCODING_PCM_16BIT, min + min / 2, AudioTrack.MODE_STREAM);
             t.play();
             acodec = c; atrack = t; aRate = rate; aCh = ch;
         } catch (Throwable e) {
@@ -558,7 +610,9 @@ public final class RxEngine {
      *  paces this thread, so no PTS scheduling is needed yet (M3.1 will add A/V sync). */
     private void decodeAudio(byte[] adts, int hdr) {
         try {
-            int idx = acodec.dequeueInputBuffer(10_000);
+            // non-blocking: blocking 10ms per frame on a decoder hiccup backs up the
+            // handler queue and adds seconds of audio lag (reported ~3s).
+            int idx = acodec.dequeueInputBuffer(0);
             if (idx >= 0) {
                 ByteBuffer b = acodec.getInputBuffer(idx);
                 if (b != null) {
@@ -632,6 +686,7 @@ public final class RxEngine {
         long lost = lostSeq.get(), fed = framesFed.get();
         String res = (width > 0 && height > 0) ? (width + "x" + height) : "-";
         String tail = "lost-seq=" + lost + " drop-au=" + droppedAu.get()
+                + " idr=" + fedIdr.get()
                 + " meta=" + metaCount.get() + " res=" + res
                 + " aud=" + audioFed.get() + " adrop=" + audioDrop.get()
                 + (waitingIdr ? " waitIDR" : "");
