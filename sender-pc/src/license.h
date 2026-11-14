@@ -56,29 +56,63 @@ inline bool sha256(const void* data, size_t len, uint8_t out[32]) {
 }
 
 // ---------------- 机器码（与 C# 完全一致）----------------
-inline std::string machine_code() {
-  char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
-  DWORD n = sizeof name;
-  if (!GetComputerNameA(name, &n)) name[0] = 0;
+// 必须和界面 ProjectorUi.License.MachineCode()、发码工具 MakeLicense.LocalMachineCode()
+// 逐字节一致，否则会出现「注册成功但仍不能投屏」。三处统一口径：
+//   机器名(UTF-8) | 系统盘卷标(UTF-8，不截断) : 系统盘总容量(十进制) | 逻辑核数
+// 注意：系统盘取 GetSystemDirectory 的盘符（不是硬编码 C:），卷标用宽字符 API 再转 UTF-8
+// （中文卷标用 ANSI 会得到 GBK 字节，和 C# 的 UTF-8 对不上）。
+inline std::wstring u8w(const std::string& s) {          // UTF-8 → UTF-16
+  if (s.empty()) return std::wstring();
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+  std::wstring out((size_t)n, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &out[0], n);
+  return out;
+}
+inline std::string w8u(const std::wstring& w) {          // UTF-16 → UTF-8
+  if (w.empty()) return std::string();
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+  std::string out((size_t)n, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &out[0], n, nullptr, nullptr);
+  return out;
+}
 
-  char sysDrive[4] = "C:";
-  char vol[64] = "";
-  char fs[64] = "";
+inline std::string sys_drive_root() {          // 例 "C:\\"，与 C# Path.GetPathRoot(Environment.SystemDirectory) 一致
+  wchar_t dir[MAX_PATH] = {};
+  UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+  if (n >= 2) return w8u(std::wstring(dir, 2) + L"\\");
+  return "C:\\";
+}
+
+inline std::string machine_raw() {
+  wchar_t wname[256] = {};
+  DWORD n = 255;
+  GetComputerNameW(wname, &n);
+  std::wstring prefix = std::wstring(wname, n);
+
+  std::string drive = sys_drive_root();
+  std::wstring wdrive = u8w(drive);
+
+  wchar_t wvol[MAX_PATH] = {}, wfs[64] = {};
   DWORD serial = 0, maxComp = 0, flags = 0;
-  GetVolumeInformationA("C:\\", vol, sizeof vol, &serial, &maxComp, &flags, fs, sizeof fs);
+  GetVolumeInformationW(wdrive.c_str(), wvol, MAX_PATH, &serial, &maxComp, &flags, wfs, 64);
 
-  ULONGLONG total = 0;
   ULARGE_INTEGER freeBytes{}, totalBytes{};
-  if (GetDiskFreeSpaceExA("C:\\", &freeBytes, &totalBytes, nullptr)) total = totalBytes.QuadPart;
+  GetDiskFreeSpaceExW(wdrive.c_str(), &freeBytes, &totalBytes, nullptr);
 
   SYSTEM_INFO si{};
   GetSystemInfo(&si);
 
-  char raw[512];
-  snprintf(raw, sizeof raw, "%s|%s:%llu|%u", name, vol, (unsigned long long)total, (unsigned)si.dwNumberOfProcessors);
+  char b[1024];
+  snprintf(b, sizeof b, "%s|%s:%llu|%u",
+           w8u(prefix).c_str(), w8u(std::wstring(wvol)).c_str(),
+           (unsigned long long)totalBytes.QuadPart, (unsigned)si.dwNumberOfProcessors);
+  return b;
+}
 
+inline std::string machine_code() {
+  std::string raw = machine_raw();
   uint8_t h[32];
-  if (!sha256(raw, strlen(raw), h)) return "0000-0000-0000";
+  if (!sha256(raw.c_str(), raw.size(), h)) return "0000-0000-0000";
   char hex[13];
   for (int i = 0; i < 6; i++) snprintf(hex + i * 2, 3, "%02X", h[i]);
   char out[16];
@@ -87,33 +121,11 @@ inline std::string machine_code() {
 }
 
 // 诊断用：返回机器码的原始拼接串（排查和界面对不上时用）
-inline std::string machine_debug() {
-  char name[MAX_COMPUTERNAME_LENGTH + 1] = {};
-  DWORD n = sizeof name;
-  if (!GetComputerNameA(name, &n)) name[0] = 0;
-  char vol[64] = "", fs[64] = "";
-  DWORD serial = 0, maxComp = 0, flags = 0;
-  GetVolumeInformationA("C:\\", vol, sizeof vol, &serial, &maxComp, &flags, fs, sizeof fs);
-  ULARGE_INTEGER freeBytes{}, totalBytes{};
-  GetDiskFreeSpaceExA("C:\\", &freeBytes, &totalBytes, nullptr);
-  SYSTEM_INFO si{};
-  GetSystemInfo(&si);
-  char raw[512];
-  snprintf(raw, sizeof raw, "%s|%s:%llu|%u", name, vol, (unsigned long long)totalBytes.QuadPart,
-           (unsigned)si.dwNumberOfProcessors);
-  return raw;
-}
+inline std::string machine_debug() { return machine_raw(); }
 
 // ---------------- 存储位置（与界面同一套回退，宽字符路径）----------------
 // 注意：目录名"星联投屏"用 UTF-8 字节序列在运行时转成 UTF-16，
-// 避免源文件编码（GBK/UTF-8）影响中文路径。
-inline std::wstring u8w(const std::string& s) {
-  if (s.empty()) return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
-  std::wstring out((size_t)n, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &out[0], n);
-  return out;
-}
+// 避免源文件编码（GBK/UTF-8）影响中文路径。（u8w 定义在文件上部）
 inline const std::wstring& app_folder() {
   static const std::wstring f = u8w("\xE6\x98\x9F\xE8\x81\x94\xE6\x8A\x95\xE5\xB1\x8F");  // 星联投屏
   return f;
