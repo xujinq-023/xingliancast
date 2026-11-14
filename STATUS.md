@@ -1082,3 +1082,17 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - 点击后：临时提示，剪贴板 = `xujinq@hotmail.com  /  +86 13996351705`
 - 2 秒后：文字还原
 - 第二次点击：剪贴板仍为联系方式（不再是提示语）
+### 71) 安装位置改为 Program Files（2026-11-14 15:40）
+**问题**：默认装到 `%LOCALAPPDATA%\Programs\...`，与常规 Windows 软件不一致（用户在 AppData 里找不到）。
+
+**改动**（`installer\setup\Setup.cs`）
+- `DefaultDir` → **`C:\Program Files\XingLianCast`**（取消「提权才用 PF」的分支，统一用常规路径）
+- Main 入口新增**自动提权**：非管理员时以 `runas` 重新启动自身并带 `/elevated` 标记；
+  用户点「否」则继续以当前用户身份安装，`PickWritableDir` 自动退回 `%LOCALAPPDATA%\Programs\XingLianCast`
+- 安装目录名 / 卸载项 / AppId 统一为 `XingLianCast`（原 `XingLianProjector`）
+- 参数转发时对含空格的值加引号（`/dir=` 路径含空格也不出错）
+
+**注意**
+- 装到 Program Files 后程序目录只读，日志/试用/授权会自动落到 `%LOCALAPPDATA%\星联投屏`
+  （多位置回退已实现并验证：`Store` 依次尝试 LocalAppData → Roaming → 程序目录\data → TEMP → 注册表）
+- 本机沙盒禁止写 C:\Program Files，未能在本环境实测；代码路径为标准提权+写目录逻辑

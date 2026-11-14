@@ -49,7 +49,7 @@ static class App
     public const string Name = "星联投屏";
     public const string Version = "1.0.0";
     public const string Publisher = "星联投屏";
-    public const string AppId = "XingLianProjector";
+    public const string AppId = "XingLianCast";
 
     public static bool IsElevated
     {
@@ -69,21 +69,40 @@ static class App
     {
         get
         {
-            // 提权时用 Program Files（写用户目录反而可能因账户/ACL 被拒），
-            // 普通权限时用 LocalAppData（无需管理员）
-            if (IsElevated)
+            // 常规做法：装到 Program Files\XingLianCast（需要管理员）
+            // 用户拒绝 UAC 时退回当前用户目录（不需要管理员）
+            try
             {
                 string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-                return Path.Combine(pf, "XingLianProjector");
+                if (!string.IsNullOrEmpty(pf)) return Path.Combine(pf, "XingLianCast");
             }
+            catch { }
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                                @"Programs\XingLianProjector");
+                                @"Programs\XingLianCast");
         }
     }
 
     [STAThread]
     static void Main(string[] args)
     {
+        // 默认按「为所有用户安装」的常规方式：需要管理员权限
+        // 用户拒绝 UAC 时继续以当前用户身份安装（目录会自动退回 %LOCALAPPDATA%）
+        bool elevatedMarker = Array.Exists(args, a => a.Equals("/elevated", StringComparison.OrdinalIgnoreCase));
+        if (!App.IsElevated && !elevatedMarker)
+        {
+            try
+            {
+                var quoted = string.Join(" ", Array.ConvertAll(args, a => a.Contains(" ") ? "\"" + a + "\"" : a)).Trim();
+                var psi = new ProcessStartInfo(Application.ExecutablePath,
+                                               (quoted + " /elevated").Trim());
+                psi.UseShellExecute = true;
+                psi.Verb = "runas";
+                Process.Start(psi);
+                return;
+            }
+            catch { /* 用户点了「否」：继续非提权安装 */ }
+        }
+
         bool uninstall = args.Length > 0 && args[0].ToLowerInvariant().Contains("uninstall");
         bool silent = Array.Exists(args, a => a.Equals("/silent", StringComparison.OrdinalIgnoreCase) ||
                                               a.Equals("/S", StringComparison.OrdinalIgnoreCase));
@@ -143,9 +162,9 @@ static class App
         detail = "";
         var cands = new List<string>();
         cands.Add(preferred);
-        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XingLianProjector"));
-        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "XingLianProjector"));
-        try { cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "XingLianProjector")); } catch { }
+        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XingLianCast"));
+        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "XingLianCast"));
+        try { cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "XingLianCast")); } catch { }
         foreach (var d in cands)
         {
             try
@@ -419,7 +438,7 @@ class InstallForm : Form
             {
                 d.Description = "选择安装位置";
                 d.SelectedPath = _dir.Text;
-                if (d.ShowDialog(this) == DialogResult.OK) _dir.Text = Path.Combine(d.SelectedPath, "XingLianProjector");
+                if (d.ShowDialog(this) == DialogResult.OK) _dir.Text = Path.Combine(d.SelectedPath, "XingLianCast");
             }
         };
         Controls.Add(browse);
