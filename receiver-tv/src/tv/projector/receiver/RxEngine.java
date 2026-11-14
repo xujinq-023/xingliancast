@@ -318,7 +318,11 @@ public final class RxEngine {
             String srcIp = src == null ? "?" : src.getHostAddress();
             String cur = peer;
             boolean hasSession = cur != null && !cur.equals("-") && !cur.equals("?");
-            boolean hot = hasSession && lastRxWall > 0 && (nowW - lastRxWall) < BUSY_WINDOW_MS;
+            long nowMs2 = System.currentTimeMillis();
+            // 活跃 = 收包活跃 或 最近 3 秒真的解出过画面。
+            // 只看收包会在「刚连上/短暂空档」时误判为空闲，让新机器抢占（实测会打断当前画面）。
+            boolean hot = hasSession && ((lastRxWall > 0 && (nowW - lastRxWall) < BUSY_WINDOW_MS)
+                                      || (lastFrameWall > 0 && (nowMs2 - lastFrameWall) < 3000));
             if (hot && !srcIp.equals(cur)) {
                 // 已有电脑在投屏：后来者一律拒绝，且不切换会话（先连的优先）
                 refuse(src, srcIp, nowW);

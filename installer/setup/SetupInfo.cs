@@ -6,6 +6,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("星联投屏")]
 [assembly: AssemblyCompany("XingLian")]
 [assembly: AssemblyCopyright("Copyright © 2026 XingLian")]
-[assembly: AssemblyVersion("1.0.5.0")]
-[assembly: AssemblyFileVersion("1.0.5.0")]
+[assembly: AssemblyVersion("1.0.6.0")]
+[assembly: AssemblyFileVersion("1.0.6.0")]
 [assembly: ComVisible(false)]

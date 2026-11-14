@@ -938,7 +938,7 @@ auto tick = [&]() {
         last_bytes = nb; last_abytes = nab;
         feedback.Tick(now);
         fb::Snapshot fs = feedback.Get();
-        if (fs.busy && !g_tvBusy) {
+        if (fs.busy && !g_tvBusy && !getenv("PJS_IGNOREBUSY")) {
           g_tvBusy = true;
           Logf("[提示] 电视正在被另一台电脑投屏（先连的设备优先），本机停止投屏。");
           fprintf(stderr, "TV_BUSY\n");
