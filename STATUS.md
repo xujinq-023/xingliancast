@@ -1460,3 +1460,16 @@ NAS 恢复后重新同步 `\\10.5.9.6\Images and Software\XingLianCast\2026-11-1
 - `docs/用户手册.md`、`README.md`、`安装说明.txt`：版本号与文件名更新
 
 **实测**：本机安装 1.0.12 后页脚显示 `v1.0.12 · build 11-14 20:44` ✅
+### 91) 交叉测试清单高危项（M1/H1-H8）落地 + 1.0.13 发布（2026-11-14 22:0x）
+按清单逐条核对后修复：M1（单发）、H5（发码工具）、H3（机器码三端一致）、
+H7（--license 验签后再落盘 / 信标 IP 校验）、H2（退出码 6 = 采集初始化失败）、
+H4（换机复位 + bye 清热判据 + 残留包屏蔽 3s）、H1（WGC 暂停时丢弃真实帧）、
+M3（解锁仅 DDA 重建）、H8（删除废弃 projector.iss）。
+
+版本：PC 1.0.13 / TV versionCode 113。
+产物：installer\dist\XingLianCast-Setup-1.0.13.exe（签名 Valid，标签 Medium）
+NAS：\\10.5.9.6\...\XingLianCast\2026-11-14-v1.0.13\
+
+⚠️ 发现：本地私钥备份 D:\Share\XingLianCast-signing-backup-20261114.7z 已不存在
+（D:\Share 为空）。本次快照的 signing-backup 是从旧快照 v1.0.12 复制回来的，
+哈希一致。**请务必另存一份到 U 盘/加密网盘**，目前它只存在于 NAS 快照里。

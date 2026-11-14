@@ -1,6 +1,6 @@
 @echo off
 rem Projector sender - portable per-user installer (ASCII only; cmd codepage safe).
-rem The bilingual UI is provided by the Inno Setup package (projector.iss).
+rem The shipped installer is installer\setup\Setup.cs (C#).
 setlocal EnableDelayedExpansion
 set "SRC=%~dp0payload"
 set "DEST=%LOCALAPPDATA%\Programs\Projector"

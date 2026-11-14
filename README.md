@@ -58,7 +58,7 @@ QINL-370A   10.5.9.22:45690
 
 ### 2. 电脑端
 
-运行安装包 `XingLianCast-Setup-1.0.12.exe`（默认装到 `C:\Program Files\XingLianCast`），
+运行安装包 `XingLianCast-Setup-1.0.13.exe`（默认装到 `C:\Program Files\XingLianCast`），
 首次启动在防火墙弹窗里选「允许访问」。
 
 ### 3. 投屏

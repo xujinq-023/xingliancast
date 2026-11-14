@@ -910,14 +910,16 @@ auto tick = [&]() {
         }
         if (needReinitAfterUnlock && !nowLocked) {
           needReinitAfterUnlock = false;
-          HRESULT hri = initDDA();          // 解锁后桌面复制通常已失效，必须重建
-          first = true;                      // 重新从关键帧开始
+          if (useDDA) {
+            HRESULT hri = initDDA();        // DDA：锁屏会让桌面复制失效，必须重建
+            Logf("解锁后重新初始化 DDA 捕获 hr=0x%08x\n", (unsigned)hri);
+          } else {
+            // WGC：捕获会话不受锁屏影响（锁屏期间只是丢帧），不要乱调 initDDA
+            Logf("解锁：WGC 捕获继续，从关键帧恢复\n");
+          }
+          first = true;                     // 两条路径都从关键帧重新开始
           haveFrame = false;
-          Logf("解锁后重新初始化捕获 hr=0x%08x\\n", (unsigned)hri);
         }
-      }
-      // 诊断：PJS_FORCE_PAUSE=1 → 4 秒暂停、12 秒恢复（复制锁屏/解锁的完整状态机，不用真的锁屏）
-      if (getenv("PJS_FORCE_PAUSE")) {
         static bool p1 = false, p2 = false;
         uint64_t el = now - startMs;
         if (el > 4000 && !p1) {
@@ -926,9 +928,10 @@ auto tick = [&]() {
         }
         if (el > 12000 && !p2) {
           p2 = true; g_paused = false;
-          HRESULT hpg = initDDA(); first = true; haveFrame = false;
+          if (useDDA) { HRESULT hpg = initDDA(); (void)hpg; }
+          first = true; haveFrame = false;
           out.send_unlock();
-          Logf("[diag] 强制恢复 hr=0x%08x\\n", (unsigned)hpg);
+          Logf("[diag] 强制恢复\\n");
         }
       }
       // 诊断：PJS_FAKE_LOCK=1 → 3 秒发 lk、8 秒发 ul，用来自测电视端遮罩（无需真的锁屏）
@@ -1161,6 +1164,24 @@ auto tick = [&]() {
       pool.FrameArrived([&](auto&&, auto&&) { SetEvent(evt.get()); });
       while (!g_stop) {
         WaitForSingleObject(evt.get(), 250);
+        if (g_paused) {
+          // 锁屏暂停（H1）：WGC 抓到的是"锁屏界面/登录页"，绝不能推给电视。
+          // 这里把真实帧全部丢弃，只按 DDA 路径同样的节奏重发模糊遮罩帧，
+          // 保证解码器不死、电视显示"电脑已锁屏"。
+          while (auto drop = pool.TryGetNextFrame()) drop.Close();
+          static uint64_t lastPauseTxW = 0;
+          if (havePauseFrame && mode != 2 && GetTickCount64() - lastPauseTxW > 500) {
+            lastPauseTxW = GetTickCount64();
+            LARGE_INTEGER qp; QueryPerformanceCounter(&qp);
+            LONGLONG ts = qp.QuadPart * 10000000 / qpf.QuadPart;
+            uint8_t* yp = pauseFrame.data();
+            uint8_t* uv = yp + (size_t)pauseW * pauseH;
+            enc.Encode(yp, pauseW, uv, pauseW, ts, dur100, pauseFirstIdr, on_au);
+            pauseFirstIdr = false;
+          }
+          tick();
+          continue;
+        }
         while (auto frame = pool.TryGetNextFrame()) {
           auto surface = frame.Surface();
           dx11i::IDirect3DDxgiInterfaceAccess* rawacc = nullptr;
