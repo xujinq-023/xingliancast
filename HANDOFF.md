@@ -130,7 +130,7 @@ cd D:\DSH-Workplace\XingLianCast\receiver-tv
 powershell -ExecutionPolicy Bypass -File build.ps1
 
 # 签名（每次重编后必须重签，否则签名失效）
-$cert = Get-Item "Cert:\CurrentUser\My\BB336FBB91AAE5FDDED1577CDCCFD3E83CBD77BE"
+$cert = Get-Item "Cert:\CurrentUser\My\C298644FCF4FDBE22B49BA99472A4E50AC217E27"
 Set-AuthenticodeSignature -FilePath <exe> -Certificate $cert
 
 # 打包（payload → zip → setup.exe）
@@ -149,5 +149,5 @@ csc /target:winexe /out:XingLianSetup.exe /resource:payload.zip,payload.zip ...
 | 状态回传端口 | UDP 45692（PC 监听） |
 | 协议头 | 16 字节大端（magic/type/seq/ts/flags/len） |
 | 注册码密钥 | `XL-2026-PROJECTOR-SIGNKEY-7f3a91c4`（HMAC 输入，**待改非对称**） |
-| 签名证书指纹 | `BB336FBB91AAE5FDDED1577CDCCFD3E83CBD77BE` |
+| 签名证书指纹 | `C298644FCF4FDBE22B49BA99472A4E50AC217E27` |
 | 证书 PFX 密码 | `XingLian!2026` |

@@ -26,7 +26,7 @@ goto :sign
 
 :sign
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$c=Get-Item 'Cert:\CurrentUser\My\BB336FBB91AAE5FDDED1577CDCCFD3E83CBD77BE' -ErrorAction SilentlyContinue; if($c){ $s=Set-AuthenticodeSignature -FilePath 'ProjectorUi.exe' -Certificate $c; Write-Host ('sign: '+$s.Status) } else { Write-Host 'sign: certificate not found' }"
+  "$c=Get-Item 'Cert:\CurrentUser\My\C298644FCF4FDBE22B49BA99472A4E50AC217E27' -ErrorAction SilentlyContinue; if($c){ $s=Set-AuthenticodeSignature -FilePath 'ProjectorUi.exe' -Certificate $c; Write-Host ('sign: '+$s.Status) } else { Write-Host 'sign: certificate not found' }"
 echo [OK] ProjectorUi.exe ready
 goto :eof
 

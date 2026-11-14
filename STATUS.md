@@ -1014,3 +1014,18 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - `XingLianCast-Setup.exe`（安装包，已签名）
 - `XingLianCast-Portable-1.0.0.zip`
 - `receiver-tv.apk`（含新图标，需重装）
+### 66) 代码签名证书更换为新品牌名（2026-11-14 14:55）
+**问题**：自签名证书主体仍是旧名（截图「颁发给：XingLian Projector」）。
+
+**新证书**
+- `New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=XingLianCast"`，RSA 2048，10 年（至 2036-11-14）
+- 指纹 `C298644FCF4FDBE22B49BA99472A4E50AC217E27`（旧：`BB336FBB…`）
+- 导出 `signing\xinglian-codesign.pfx`（密码 XingLian!2026）+ `.cer`，并导入本机 `LocalMachine\Root` + `TrustedPublisher`
+- 已更新引用旧指纹的文件：`sender-pc\ui\obf.bat`、`signing\sign.ps1`、`HANDOFF.md`
+
+**重新签名并验证（全部 Valid，颁发给 = CN=XingLianCast）**
+- `sender.exe`（build + payload）
+- `ProjectorUi.exe`（ui + build + payload）
+- `XingLianCast-Setup.exe`
+
+**重新打包**：`installer\dist\XingLianCast-Setup.exe`、`XingLianCast-Portable-1.0.0.zip`、`xinglian-codesign.cer`（新证书）
