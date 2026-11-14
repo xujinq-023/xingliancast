@@ -1353,3 +1353,21 @@ NAS 恢复后重新同步 `\\10.5.9.6\Images and Software\XingLianCast\2026-11-1
 
 校验：安装包 v1.0.4.0 签名 Valid；TV APK versionCode=104；安装包 SHA256 与本地一致；
 合计 28.5 MB / 1088 文件。
+### 85) 修复：第二台电脑连入时电视画面短暂中断（2026-11-14 19:55，TV 1.0.6 / PC 1.0.5）
+**现象**：两台 PC 投同一台 TV，第二台被拒绝后，电视画面会断约 1 秒。
+
+**根因（两处）**
+1. `MSG_CTRL_HELLO` 无条件 `releaseCodec()` + `waitingIdr = true`：
+   别的电脑发来 hello 也会拆掉当前解码器，当前流要等下一个 IDR（PC 只在首帧/丢包/空闲时才发 IDR）→ 约 1 秒黑屏。
+2. `refuse()` 在**接收线程**里 `new DatagramSocket()` + `send()` 到一个陌生 IP：
+   会触发 ARP 解析，阻塞数百毫秒，期间接收线程不读包 → 当前流丢包/卡顿。
+
+**修复**
+- 电视端：hello 到来时若「最近 2 秒内还在出帧且不在等 IDR」→ **忽略本次重建**，只记日志
+- 电视端：忙包发送移到单线程执行器 + 专用 socket，接收线程零阻塞
+- 电视端：反馈新增 `needidr=`，等待关键帧时通知电脑
+- 电脑端：解析 `needidr` → 立即补 IDR（解码器重建/丢包恢复从 ~1 秒降到 ~100ms）
+
+**版本**：TV `versionCode 106 / 1.0.6`（屏显 v1.0.6）；PC 安装包 1.0.5
+**产物**：`installer\dist\XingLianCast-Setup-1.0.5.exe`、`XingLianCast-Portable-1.0.5.zip`、`receiver-tv.apk`
+**NAS**：`\\10.5.9.6\...\XingLianCast\2026-11-14-v1.0.5\`（28.5 MB / 1088 文件，标签已修正）

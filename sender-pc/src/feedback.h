@@ -26,6 +26,7 @@ struct Snapshot {
   int   w = 0, h = 0;
   double rttMs  = -1;      // 网络往返（ping/pong）
   bool  busy    = false;   // 电视已被另一台电脑占用（TV 回 "PJS/B1 busy=1"）
+  bool  needIdr = false;   // 电视正在等关键帧（重建解码器/丢包）→ 立刻补一个 IDR
 };
 
 class Feedback {
@@ -121,6 +122,7 @@ class Feedback {
         else if (k == "idr") snap_.idr = atol(v.c_str());
         else if (k == "aud") snap_.aud = atol(v.c_str());
         else if (k == "adrop") snap_.adrop = atol(v.c_str());
+        else if (k == "needidr") snap_.needIdr = (v != "0");
         else if (k == "res") {
           int w = 0, h = 0;
           if (sscanf(v.c_str(), "%dx%d", &w, &h) == 2) { snap_.w = w; snap_.h = h; }

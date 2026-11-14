@@ -946,6 +946,7 @@ auto tick = [&]() {
         }
         lastSecFrames = (int)frames;
         if (fs.alive && fs.lost > 0) needIdr = true;   // 电视报丢包：立刻补 IDR，避免长期黑屏
+        if (fs.alive && fs.needIdr) needIdr = true;    // 电视在等关键帧（解码器刚重建）→ 立刻补
         char line[768];
         snprintf(line, sizeof line,
                  "fps=%.1f 收=%llu 限=%llu 间隔max=%.0fms 大间隔=%llu 显示间隔max=%.0fms 包=%llu 音包=%u 流量=%.2fMbps 音流=%.0fkbps 转换=%.1fms 编码=%.1fms 送失=%llu [%s]", frames / sec,

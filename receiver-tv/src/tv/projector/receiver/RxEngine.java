@@ -116,6 +116,8 @@ public final class RxEngine {
     private volatile long lastRxWall;        // 最近一次收到「当前会话」的包（占线判断用）
     private static final long BUSY_WINDOW_MS = 5000;   // 超过 5 秒没包视为空闲，允许他人接管
     private final java.util.HashMap<String, Long> denied = new java.util.HashMap<>();  // 拒绝节流
+    private java.util.concurrent.ExecutorService refuser;   // 「忙」回复独立线程（不在接收线程里发包）
+    private volatile DatagramSocket refuseSock;             // 专用 socket，避免和反馈通道抢
     private volatile String pcName = "";      // 电脑端计算机名（由 hn 指令上报）
     private volatile String pcPort = "";      // 电脑端 UDP 端口
     // 独立丢包统计（不影响重组逻辑）：只按"相邻收到的视频序号差"累加
@@ -173,6 +175,9 @@ public final class RxEngine {
         DatagramSocket s = socket;
         if (s != null) { try { s.close(); } catch (Throwable ignored) { } }
         if (rx != null) rx.interrupt();
+        if (refuser != null) { try { refuser.shutdownNow(); } catch (Throwable ignored) { } refuser = null; }
+        DatagramSocket rs = refuseSock;
+        if (rs != null) { try { rs.close(); } catch (Throwable ignored) { } refuseSock = null; }
         pipe.post(new Runnable() {
             @Override public void run() { releaseCodec(); thread.quit(); }
         });
@@ -188,6 +193,9 @@ public final class RxEngine {
     // ---------------- rx thread ----------------
 
     private void startRx() {
+        if (refuser == null) {
+            refuser = java.util.concurrent.Executors.newSingleThreadExecutor();
+        }
         rx = new Thread(new Runnable() {
             @Override public void run() { receiveLoop(); }
         }, "pjs-rx");
@@ -219,7 +227,8 @@ public final class RxEngine {
                         + "\nidr=" + fedIdr.get()
                         + "\naud=" + audioFed.get()
                         + "\nadrop=" + audioDrop.get()
-                        + "\nres=" + (width > 0 ? width + "x" + height : "-");
+                        + "\nres=" + (width > 0 ? width + "x" + height : "-")
+                        + "\nneedidr=" + (waitingIdr ? 1 : 0);
                     lostReported = lostPkts;
                     byte[] b = txt.getBytes(StandardCharsets.UTF_8);
                     s.send(new DatagramPacket(b, b.length, dst, 45692));
@@ -243,19 +252,28 @@ public final class RxEngine {
         } catch (Throwable ignored) { }
     }
 
-    /** 已有电脑在投屏时，通知后来者「电视忙」，并保持当前会话不被打断。 */
-    private void refuse(String ip, long nowW) {
+    /**
+     * 已有电脑在投屏时，通知后来者「电视忙」。
+     * 关键：**绝不能在接收线程里做网络发送** —— 给一台新机器发包会触发 ARP 解析，
+     * 阻塞数百毫秒甚至 1 秒，期间接收线程不读包，正在投屏的那路流就会卡顿/黑一下（实测 bug）。
+     * 所以这里只做「记账」，真正的发送交给独立的单线程执行。
+     */
+    private void refuse(final InetAddress src, final String ip, long nowW) {
+        if (src == null) return;
         Long last = denied.get(ip);
         if (last != null && nowW - last < 1500) return;      // 同一台 1.5 秒内只回一次
         denied.put(ip, nowW);
         if (denied.size() > 32) denied.clear();
-        try {
-            DatagramSocket s = fbSock;
-            if (s == null) { s = new DatagramSocket(); fbSock = s; }
-            byte[] b = "PJS/B1\nbusy=1".getBytes(StandardCharsets.UTF_8);
-            s.send(new DatagramPacket(b, b.length, InetAddress.getByName(ip), 45692));
-            android.util.Log.i("PJS", "busy: refuse " + ip);
-        } catch (Throwable ignored) { }
+        refuser.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    DatagramSocket s = refuseSock;
+                    if (s == null) { s = new DatagramSocket(); refuseSock = s; }
+                    byte[] b = "PJS/B1\nbusy=1".getBytes(StandardCharsets.UTF_8);
+                    s.send(new DatagramPacket(b, b.length, src, 45692));   // 用已解析的 InetAddress，避免再查一次
+                } catch (Throwable ignored) { }
+            }
+        });
         main.post(new Runnable() {
             @Override public void run() { sink.onEvent("b2"); }
         });
@@ -296,7 +314,6 @@ public final class RxEngine {
             }
             if (!running) break;
             long nowW = SystemClock.elapsedRealtime();
-            lastRxMs = nowW;
             InetAddress src = got.getAddress();
             String srcIp = src == null ? "?" : src.getHostAddress();
             String cur = peer;
@@ -304,9 +321,10 @@ public final class RxEngine {
             boolean hot = hasSession && lastRxWall > 0 && (nowW - lastRxWall) < BUSY_WINDOW_MS;
             if (hot && !srcIp.equals(cur)) {
                 // 已有电脑在投屏：后来者一律拒绝，且不切换会话（先连的优先）
-                refuse(srcIp, nowW);
+                refuse(src, srcIp, nowW);
                 continue;
             }
+            lastRxMs = nowW;
             peer = srcIp;
             lastRxWall = nowW;
             if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); aLastSeq = -1; }
@@ -614,6 +632,12 @@ public final class RxEngine {
                 long nowMs = SystemClock.elapsedRealtime();
                 if (nowMs - lastHelloMs < 1500) break;   // 发送端连发 3 个 hello，只处理第一个
                 lastHelloMs = nowMs;
+                // 关键：已有画面在正常解码时，绝不因为「别的电脑发来 hello」而重建解码器。
+                // 重建会让当前流丢到下一个 IDR（实测约 1 秒黑屏/冻结），表现为"第二台电脑连入时电视断开一秒"。
+                if (lastFrameWall > 0 && (System.currentTimeMillis() - lastFrameWall) < 2000 && !waitingIdr) {
+                    Log.i(TAG, "hello ignored: session is active");
+                    break;
+                }
                 Log.i(TAG, "sender hello -> reset + reconfig");
                 Logx.i("sender connected (hello)");
                 asmReset = true;
