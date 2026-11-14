@@ -1335,3 +1335,13 @@ icacls XingLianCast-Setup-1.0.4.exe
 
 **教训**：在受限/沙箱环境里产出交付物后，必须检查并修正 NTFS 完整性标签，
 否则「文件本身」会把客户机上的进程降权。
+### 83) NAS 同步 v1.0.4 快照（2026-11-14 17:20）
+`\\10.5.9.6\Images and Software\XingLianCast\2026-11-14-v1.0.4\`
+- `source\`（git archive HEAD，1075 文件）
+- `dist\`（8 个产物，**已通过 icacls 清为 Medium 完整性标签**）
+- `build\`（XingLianCast.exe / XingLianCastSender.exe / APK）
+- `signing-backup\`（加密私钥 7z）
+- `备份说明.txt`（记录本次低完整性标签事故与处理方式）
+
+校验：安装包 SHA256 与本地一致、版本 1.0.4.0、签名 Valid / CN=XingLianCast。
+合计 28.5 MB / 1088 文件。
