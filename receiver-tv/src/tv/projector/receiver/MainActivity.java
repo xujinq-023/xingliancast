@@ -66,6 +66,9 @@ public class MainActivity extends Activity {
         }
     };
     private boolean errorState;
+    // 电脑端主动点「停止投屏」会发 bye：这种情况文案是「电脑端已停止投屏」，
+    // 与"掉线/被踢"的「连接已断开，等待重连…」要区分开。
+    private boolean gracefulStop;
     // 提示条超时：只负责把提示条收起来，绝不能动画面（旧版用的是 bannerTimeout，
     // 那个 Runnable 会强制 showIdle()，导致「另一台电脑尝试投屏」提示 3 秒后画面被切回等待页）
     private final Runnable bannerHide = new Runnable() {
@@ -113,11 +116,12 @@ public class MainActivity extends Activity {
             }
 
             @Override public void onEvent(String ev) {
-                if ("hi".equals(ev) || "bye".equals(ev)) { locked = false; lastKey = null; }
+                if ("hi".equals(ev)) { locked = false; gracefulStop = false; lastKey = null; }
+                else if ("bye".equals(ev)) { locked = false; gracefulStop = true; lastKey = null; }
                 else if ("lk".equals(ev)) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("ul".equals(ev)) { locked = false; lastKey = null; }
                 else if ("sw".equals(ev)) showBanner("被投显示器已断开，已切换到主显示器");
-                else if ("b2".equals(ev)) showBanner("另一台电脑尝试投屏，已拒绝（先连的设备优先）");
+                else if ("b2".equals(ev)) showBanner("另一台电脑尝试投屏，已拒绝");
                 else if ("pz".equals(ev) && !locked) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("rs".equals(ev) && locked) { locked = false; lastKey = null; }
             }
@@ -214,7 +218,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0.11");
+        ver.setText("星联投屏 TV  v1.0.12");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);
@@ -355,9 +359,10 @@ public class MainActivity extends Activity {
         if ("D".equals(key)) {
             // 断线：保留最后一帧，顶部提示条 3 秒后再回到等待页
             uiHandler.removeCallbacks(idleReset);
-            setSub("连接已断开，等待重连…", 0xFF9FE3C8);
+            setSub(gracefulStop ? "电脑端已停止投屏" : "连接已断开，等待重连…", 0xFF9FE3C8);
             tipView.setText(peer != null ? "源设备 " + peer : "");
             tipView.setTextColor(0xFF6E6A90);
+            bannerView.setText(gracefulStop ? "电脑端已停止投屏" : "连接已断开，等待重连…");
             bannerView.setVisibility(View.VISIBLE);
             uiHandler.removeCallbacks(bannerTimeout);
             uiHandler.postDelayed(bannerTimeout, 3000);
@@ -375,7 +380,7 @@ public class MainActivity extends Activity {
                 break;
             case "D":
                 // 冻结最后一帧 + 顶部提示条 3 秒，再回到等待页
-                setSub("连接已断开，等待重连…", 0xFF9FE3C8);
+                setSub(gracefulStop ? "电脑端已停止投屏" : "连接已断开，等待重连…", 0xFF9FE3C8);
                 tipView.setText(peer != null ? "源设备 " + peer : "");
                 tipView.setTextColor(0xFF6E6A90);
                 bannerView.setVisibility(View.VISIBLE);
