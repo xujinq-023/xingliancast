@@ -863,9 +863,12 @@ namespace ProjectorUi
             _key.Size = T.Sz(392, 76);
             Controls.Add(_key);
 
+            const string BuyText = "购买授权：xujinq@hotmail.com　·　+86 13996351705\n" +
+                                   "10 元/年　·　58 元终生　　点击此处复制联系方式";
+            const string ContactText = "xujinq@hotmail.com  /  +86 13996351705";
+
             var buy = new Label2();
-            buy.Text = "购买授权：xujinq@hotmail.com　·　+86 13996351705\n" +
-                       "10 元/年　·　20 元终生　　点击此处复制联系方式";
+            buy.Text = BuyText;
             buy.Font = T.F(11);
             buy.ForeColor = T.Sub;
             buy.Location = T.Pt(24, 274);
@@ -873,8 +876,19 @@ namespace ProjectorUi
             buy.Cursor = Cursors.Hand;
             buy.Click += delegate
             {
-                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); buy.Text = "联系方式已复制到剪贴板"; }
-                catch { }
+                // 复制内容始终是联系方式本身（不是标签文字），文本只做临时提示，1.5 秒后还原
+                try { Clipboard.SetText(ContactText); } catch { }
+                buy.Text = "✓ 联系方式已复制到剪贴板";
+                buy.ForeColor = Color.FromArgb(0x2E, 0xA5, 0x62);
+                var t = new System.Windows.Forms.Timer();
+                t.Interval = 1500;
+                t.Tick += delegate
+                {
+                    t.Stop(); t.Dispose();
+                    buy.Text = BuyText;
+                    buy.ForeColor = T.Sub;
+                };
+                t.Start();
             };
             Controls.Add(buy);
             var btnOk = new AccentButton();
@@ -1249,7 +1263,7 @@ class LogoBox : Panel
             };
 
             var price = new Label2();
-            price.Text = "版权费用：10 元/年　·　20 元终生\n" +
+            price.Text = "版权费用：10 元/年　·　58 元终生\n" +
                          "版权所有，请通过 E-Mail 或电话购买授权";
             price.Font = T.F(12);
             price.ForeColor = T.Sub;
@@ -1270,8 +1284,12 @@ class LogoBox : Panel
             copy.Fill = T.Card2; copy.FillHover = T.Hover; copy.TextColor = T.Text;
             copy.Click += delegate
             {
-                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); copy.Text = "已复制"; }
-                catch { }
+                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); } catch { }
+                copy.Text = "✓ 已复制";
+                var t = new System.Windows.Forms.Timer();
+                t.Interval = 1500;
+                t.Tick += delegate { t.Stop(); t.Dispose(); copy.Text = "复制联系方式"; };
+                t.Start();
             };
 
             Controls.Add(logo);
