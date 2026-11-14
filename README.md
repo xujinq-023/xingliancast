@@ -125,6 +125,8 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 环境依赖与发布流程见 [`docs/开发指南.md`](docs/开发指南.md)。
 
+> **交接/待办**：`docs/明日继续-2026-11-15.md`（当前版本 PC 1.0.16 / TV 1.0.15，剩余待办与注意事项）
+
 ---
 
 ## 许可
