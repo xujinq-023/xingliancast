@@ -960,13 +960,9 @@ auto tick = [&]() {
       // 看门狗：编码器 3 秒一帧都没吐出来（async MFT 可能既不报错也不出帧，实测 Intel QSV）
       // → 依次切换输入方式，最后换成软件编码器，保证一定有画面。
       static int rescueStep = 0;
-      static uint64_t lastAcqSeen = 0;
-      // 中途停摆也要自救：旧条件只看 total_au==0（仅启动期），编码管线启动成功后卡死
-      // 就永远不重试 → 画面冻结而进程还活着，界面也看不出问题。
-      bool newFramesNow = totalAcq != lastAcqSeen;
-      bool stalled = (total_au == 0) || (newFramesNow && !g_paused && now - lastAuMs > 3000);
-      if (newFramesNow) lastAcqSeen = totalAcq;
-      if (!g_noenc && stalled && rescueStep < 3 && now - lastRescueMs > 900) {
+      // 只覆盖启动期（编码器一帧都没出）。运行中重建编码器实测会崩溃，已回退；
+      // 如需重做"中途停摆自救"，必须单独验证该路径。
+      if (!g_noenc && total_au == 0 && rescueStep < 3 && now - lastRescueMs > 900) {
         lastRescueMs = now;
         rescueStep++;
         if (rescueStep == 1 && mode != 2 && enc.d3d() && dev && enc.NextInputTex(dev.Get()) != nullptr) {

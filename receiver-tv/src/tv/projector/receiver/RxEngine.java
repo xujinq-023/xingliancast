@@ -976,24 +976,14 @@ public final class RxEngine {
         return -1;
     }
 
-    /** 兜底：心跳还在但 3 秒没有画面（PC 锁屏/捕获暂停/编码卡住）→ 让电视显示暂停遮罩。 */
+    /** 已停用：桌面静止时补帧间隔接近阈值，会误判成"卡住"而弹出暂停遮罩（用户已明确取消该功能）。
+     *  现在只在发送端显式发 lk 时才显示锁屏页（"电脑已锁屏"）。 */
     private void checkPauseFallback() {
-        long now = SystemClock.elapsedRealtime();          // 必须与 lastRxWall/lastFrameWall 同一时钟
-        boolean alive = lastRxWall > 0 && (now - lastRxWall) < 3000;
-        boolean stalled = alive && framesFed.get() > 0 && lastFrameWall > 0 && (now - lastFrameWall) > 3000;
-        if (stalled && !pauseShown) {
-            pauseShown = true;
-            final String ev = "pz";
-            main.post(new Runnable() { @Override public void run() { sink.onEvent(ev); } });
-        } else if (!stalled && pauseShown) {
-            pauseShown = false;
-            final String ev = "rs";
-            main.post(new Runnable() { @Override public void run() { sink.onEvent(ev); } });
-        }
+        // 故意空实现：保留函数与调用点，避免以后再误启用。
     }
 
     private void tick() {
-        checkPauseFallback();
+        // checkPauseFallback();   // 需要重新启用时，务必把阈值放宽到 >5s 并先和发送端的补帧节奏对齐
         long n = framesFed.get();
         fps = n - prevFrames;                                  // 1s cadence
         if (fps < 0) fps = 0;                                  // bye 时 framesFed 归零会算出负值

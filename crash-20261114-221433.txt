@@ -1,0 +1,4 @@
+Projector sender crash
+time: 2026-11-14 22:14:33.073
+exception code: 0xc0000005
+exception address: 00007FFA90A2A12D
