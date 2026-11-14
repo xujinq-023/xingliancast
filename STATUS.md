@@ -1215,3 +1215,34 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - 新增 `installer\dist\清理旧版本.bat`（管理员运行）：停进程、takeown+icacls、删残留目录与快捷方式、清卸载项
 
 **实测**：1.0.2 静默安装到指定目录 → 10 个文件齐全 ✓（本机沙盒禁止写 C: 与 D:\ 根目录，故仅验证自定义目录路径）
+### 78) 定位「无法写入任何候选目录」真因：进程完整性被降到 Low（2026-11-14 16:45，v1.0.3）
+**结论：不是 Windows 权限，也不是目录被占用。**
+
+同一台机器（DESKTOP-HARVEY）用**高完整性**进程探测 7 个目标目录，全部可写：
+```
+OK  C:\Program Files\XingLianCast
+OK  %LOCALAPPDATA%\Programs\XingLianCast
+OK  %LOCALAPPDATA%\XingLianCast
+OK  %USERPROFILE%\XingLianCast
+OK  C:\Users\Public\XingLianCast
+OK  %TEMP%\XingLianCast
+OK  D:\XingLianCast
+```
+而安装程序进程自报：`用户=DESKTOP-HARVEY\Administrator  管理员=是  完整性=低/受限 (0x1000)`。
+最低完整性令牌（0x1000）对上述目录**一律无权写入**（连 TEMP 也写不了），于是所有候选目录都抛
+`UnauthorizedAccessException` —— 与用户看到的现象完全一致。
+
+**验证方法**：新编译一个 5 行 .NET 程序，打印自身完整性和 mkdir 结果 →
+同环境下 `integrity=0x1000 mkdir=FAIL`，而原生 `cmd` 是 `High` 且可写。
+即：**该进程是在受限/沙盒上下文里被启动的**（受限终端、下载器沙盒、自动化代理等），
+双击 Explorer 启动不会出现。
+
+**改进（1.0.3）**
+- 安装失败信息新增「进程身份」行：`用户 / 管理员 / 完整性=高|中|低(0x....) / AppContainer`
+- 新增 `Setup.exe --tokeninfo`：不开界面直接输出令牌诊断（写 `xl_token.txt`）
+- 新增 `installer\dist\诊断安装问题.ps1`：一键输出提权/完整性/杀软/AppLocker/WDAC/7 个目录写探测/残留 ACL/近期拦截事件
+- 新增 `installer\dist\清理旧版本.bat`：管理员运行，清残留目录与卸载项
+- `安装说明.txt` 增加第六节「无法写入任何候选目录怎么办」
+
+**环境事实**：该机装有 **火绒安全软件**（Defender 实时防护已关闭），火绒加固也可能拦截未知程序写盘；
+排查时建议同时把安装包加入火绒白名单。

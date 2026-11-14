@@ -8,6 +8,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Text;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Windows.Forms;
@@ -89,6 +90,14 @@ static class App
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Length >= 1 && args[0].Equals("--tokeninfo", StringComparison.OrdinalIgnoreCase))
+        {
+            string line = App.TokenReport();
+            try { File.WriteAllText(Path.Combine(Path.GetTempPath(), "xl_token.txt"), line); } catch { }
+            try { File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "xl_token.txt"), line); } catch { }
+            Environment.Exit(0);
+        }
+
         // 默认按「为所有用户安装」的常规方式：需要管理员权限
         // 用户拒绝 UAC 时继续以当前用户身份安装（目录会自动退回 %LOCALAPPDATA%）
         bool elevatedMarker = Array.Exists(args, a => a.Equals("/elevated", StringComparison.OrdinalIgnoreCase));
@@ -121,7 +130,11 @@ static class App
                 string why0;
                 string realDir = App.PickWritableDir(dir, out why0);
                 if (realDir == null)
-                    throw new UnauthorizedAccessException("无法写入任何候选目录。\n\n各路径失败原因：\n" + why0);
+                    throw new UnauthorizedAccessException(
+                      "无法写入任何候选目录。\n\n进程身份：" + App.TokenReport() +
+                      "\n\n各路径失败原因：\n" + why0 +
+                      "\n\n如果所有路径都被拒绝（包括临时目录），通常是安全软件拦截或权限令牌受限，\n" +
+                      "请把安装包加入杀毒软件白名单，或右键以管理员身份运行。");
                 if (!realDir.Equals(dir, StringComparison.OrdinalIgnoreCase))
                     log.AppendLine("fallback dir -> " + realDir);
                 dir = realDir;
@@ -157,6 +170,72 @@ static class App
         }
     }
 
+    // ---------------- 进程令牌诊断 ----------------
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool OpenProcessToken(IntPtr h, uint acc, out IntPtr tok);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool GetTokenInformation(IntPtr tok, int cls, IntPtr buf, int len, out int ret);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    /// <summary>返回一行诊断：身份 / 是否提权 / 完整性级别 / 是否 AppContainer。</summary>
+    public static string TokenReport()
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+            sb.Append("用户=").Append(id.Name);
+            var pr = new System.Security.Principal.WindowsPrincipal(id);
+            sb.Append("  管理员=").Append(pr.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator) ? "是" : "否");
+        }
+        catch { }
+        IntPtr tok = IntPtr.Zero;
+        try
+        {
+            if (OpenProcessToken(GetCurrentProcess(), 0x0008 /*TOKEN_QUERY*/, out tok))
+            {
+                // TokenIntegrityLevel = 25
+                int len = 0;
+                GetTokenInformation(tok, 25, IntPtr.Zero, 0, out len);
+                if (len > 0)
+                {
+                    IntPtr buf = Marshal.AllocHGlobal(len);
+                    try
+                    {
+                        int got;
+                        if (GetTokenInformation(tok, 25, buf, len, out got))
+                        {
+                            IntPtr sidPtr = Marshal.ReadIntPtr(buf);
+                            var sid = new System.Security.Principal.SecurityIdentifier(sidPtr);
+                            int rid = 0;
+                            try { var parts = sid.Value.Split('-'); rid = int.Parse(parts[parts.Length - 1]); } catch { }
+                            string lvl = rid >= 0x4000 ? "系统" : rid >= 0x3000 ? "高(管理员)" : rid >= 0x2000 ? "中(普通)" : "低/受限";
+                            sb.Append("  完整性=").Append(lvl).Append(" (0x").Append(rid.ToString("X")).Append(")");
+                        }
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+                }
+                // TokenIsAppContainer = 29
+                int acLen = 0;
+                GetTokenInformation(tok, 29, IntPtr.Zero, 0, out acLen);
+                if (acLen > 0)
+                {
+                    IntPtr b2 = Marshal.AllocHGlobal(acLen);
+                    try
+                    {
+                        int got2;
+                        if (GetTokenInformation(tok, 29, b2, acLen, out got2) && Marshal.ReadInt32(b2) != 0)
+                            sb.Append("  AppContainer=是(沙盒/商店环境)");
+                    }
+                    finally { Marshal.FreeHGlobal(b2); }
+                }
+            }
+        }
+        catch { }
+        finally { if (tok != IntPtr.Zero) CloseHandle(tok); }
+        return sb.ToString();
+    }
     /// <summary>按优先级挑选一个可写目录（默认位置被系统拒绝时自动回退）。</summary>
     public static string PickWritableDir(string preferred) { string ignored; return PickWritableDir(preferred, out ignored); }
 
@@ -539,7 +618,7 @@ class InstallForm : Form
                 string realDir2 = App.PickWritableDir(dir, out why);
                 realDir = realDir2;
                 if (realDir == null)
-                    throw new UnauthorizedAccessException("无法写入任何候选目录。\n\n各路径失败原因：\n" + why);
+                    throw new UnauthorizedAccessException("无法写入任何候选目录。\n\n进程身份：" + App.TokenReport() + "\n\n各路径失败原因：\n" + why);
                 if (!realDir.Equals(dir, StringComparison.OrdinalIgnoreCase))
                     BeginInvoke((Action)delegate { _status.Text = "默认位置不可写，改用：" + realDir; });
                 dir = realDir;
