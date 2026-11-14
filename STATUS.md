@@ -1042,3 +1042,9 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - `/silent /dir=...` 解包与安装流程正常，日志含 `extract OK` / `cert: ...`
 - 本沙盒环境拒绝子进程写证书存储（日志显示失败），故自动安装需在真实机器验证；
   已提供手动导入步骤写入 `安装说明.txt` 第五节
+### 68) 版本定为 1.0（2026-11-14 15:12）
+- PC 界面：`v1.0`（关于页 + 页脚）
+- TV 端：`星联投屏 TV  v1.0`
+- 安装程序：`Version = "1.0.0"`，`AssemblyVersion/FileVersion = 1.0.0.0`
+- 产物重命名：`XingLianCast-Setup-1.0.0.exe`、`XingLianCast-Portable-1.0.0.zip`
+- 冒烟测试：`/silent` 安装到测试目录 → 10 个文件齐全 → 启动正常，页脚显示 `v1.0 · build 11-14 15:11`

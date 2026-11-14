@@ -1180,7 +1180,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v0.1    Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0    Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1960,7 +1960,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v0.1  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
