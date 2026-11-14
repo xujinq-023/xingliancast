@@ -36,12 +36,12 @@ ping -n 2 127.0.0.1 >nul
 
 echo  [2/5] copying files...
 if not exist "%DST%" mkdir "%DST%" 2>nul
-xcopy /y /e /i /q "%SRC%\*" "%DST%\" >nul 2>&1
+copy /y "%SRC%\*" "%DST%\" >nul 2>&1
 if not exist "%DST%\XingLianCast.exe" (
   echo  [!] cannot write to "%DST%", falling back to user folder...
   set "DST=%LOCALAPPDATA%\Programs\XingLianCast"
   if not exist "%DST%" mkdir "%DST%" 2>nul
-  xcopy /y /e /i /q "%SRC%\*" "%DST%\" >nul 2>&1
+  copy /y "%SRC%\*" "%DST%\" >nul 2>&1
 )
 if not exist "%DST%\XingLianCast.exe" (
   echo  [!] copy failed even to user folder.
