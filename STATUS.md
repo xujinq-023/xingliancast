@@ -1308,3 +1308,30 @@ OK  D:\XingLianCast
   （+ perMonitorV2 DPI、supportedOS），编译时 `/win32manifest:app.manifest`
 - 移除自我 `runas` 重启；若未提权只提示「请右键以管理员身份运行」并退出(7)
 - 校验：exe 内已嵌入 `requireAdministrator`，签名 Valid，版本 1.0.4.0
+### 82) 真因确诊：发布产物带「低完整性」文件标签（2026-11-14 17:15，v1.0.4）
+**证据**
+```
+icacls XingLianCast-Setup-1.0.4.exe
+  ... Mandatory Label\Low Mandatory Level:(I)(NW)
+  S-1-4-371069922-150180698:(I)(W,D,DC)
+```
+产物是在**低完整性工作目录**（自动化沙箱 `D:\DSH-Workplace`）里生成的，文件因此继承
+`Low Mandatory Level` 标签；客户机双击时进程按该标签以**低完整性**运行，对包括
+`%TEMP%` 在内的所有路径都无权写入，且**右键以管理员身份运行也无效**。
+
+这也解释了此前所有现象：用户的 `诊断.bat`（cmd 自身为 High）能写 7 个目录，
+而我们的 exe 一启动就是 0x1000；与火绒、Codex 沙箱、网银控件均无关。
+
+**修复与验证**
+1. 把产物复制到普通目录（桌面），执行
+   `icacls <dir> /reset /t` + `icacls <dir> /setintegritylevel (OI)(CI)Medium /t`
+   → 标签变为 `Medium Mandatory Level`
+2. 用计划任务（高权限）跑 `--tokeninfo`：**0x2000 MEDIUM**（不再是 0x1000）✓
+3. 静默安装实测：**成功写入 `C:\Program Files\XingLianCast`**，10 个文件齐全，
+   证书导入 / 开始菜单 / 桌面快捷方式 / 卸载注册项全部 OK ✓
+4. 安装后的 `XingLianCast.exe` 在 Program Files 下继承 Medium 标签，启动正常（窗口标题「星联投屏」）✓
+
+**新增** `tools\fix-integrity-labels.ps1`：发布前对 dist 目录重置 ACL 并设 Medium 标签。
+
+**教训**：在受限/沙箱环境里产出交付物后，必须检查并修正 NTFS 完整性标签，
+否则「文件本身」会把客户机上的进程降权。
