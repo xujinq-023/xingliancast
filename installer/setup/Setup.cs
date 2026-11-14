@@ -8,6 +8,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -35,6 +36,9 @@ static class RegistryHelper
 static class App
 {
     /// <summary>从内嵌 app.ico 加载窗口/任务栏图标。</summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool MoveFileEx(string existing, string newName, int flags);
+
     public static Icon LoadIcon()
     {
         try
@@ -162,9 +166,18 @@ static class App
         detail = "";
         var cands = new List<string>();
         cands.Add(preferred);
-        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XingLianCast"));
-        cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "XingLianCast"));
-        try { cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "XingLianCast")); } catch { }
+        string lad0 = "", up0 = "";
+        try { lad0 = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } catch { }
+        try { up0 = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile); } catch { }
+        if (lad0.Length > 0) { cands.Add(Path.Combine(lad0, @"Programs\XingLianCast")); cands.Add(Path.Combine(lad0, "XingLianCast")); }
+        if (up0.Length > 0)  { cands.Add(Path.Combine(up0, @"Programs\XingLianCast"));  cands.Add(Path.Combine(up0, "XingLianCast")); }
+        try { cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "XingLianCast")); } catch { }
+        try { foreach (var dr in DriveInfo.GetDrives()) { if (dr.DriveType == DriveType.Fixed && !dr.Name.StartsWith("C", StringComparison.OrdinalIgnoreCase)) cands.Add(Path.Combine(dr.Name, "XingLianCast")); } } catch { }
+        for (int k = 2; k <= 4; k++) {
+            string par = Path.GetDirectoryName(preferred);
+            if (!string.IsNullOrEmpty(par)) cands.Add(Path.Combine(par, "XingLianCast-" + k));
+        }
+        try { cands.Add(Path.Combine(Path.GetTempPath(), "XingLianCast")); } catch { }
         foreach (var d in cands)
         {
             try
@@ -721,13 +734,39 @@ class UninstallForm : Form
                 catch { hasLogs = false; }
             }
 
-            try { Directory.Delete(dir, true); } catch { }
+            // 删除程序文件：占用中的文件删不掉时重试，仍不行就登记「重启后删除」
+            int stuck = 0;
+            for (int attempt = 0; attempt < 3 && Directory.Exists(dir); attempt++)
+            {
+                try { Directory.Delete(dir, true); break; }
+                catch
+                {
+                    try
+                    {
+                        foreach (var f2 in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                        {
+                            try { File.Delete(f2); }
+                            catch { stuck++; App.MoveFileEx(f2, null, 4); }   // MOVEFILE_DELAY_UNTIL_REBOOT
+                        }
+                        foreach (var d2 in Directory.GetDirectories(dir, "*", SearchOption.AllDirectories))
+                        { try { Directory.Delete(d2, true); } catch { } }
+                    }
+                    catch { }
+                    System.Threading.Thread.Sleep(350);
+                }
+            }
+            if (Directory.Exists(dir)) { try { App.MoveFileEx(dir, null, 4); stuck++; } catch { } }
 
-            Directory.CreateDirectory(dir);
+            if (hasApk) { try { File.Copy(apkBackup, keep1, true); } catch { } }
+
+            Application.DoEvents();
+            if ((hasApk || hasLogs) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
             if (hasApk) { try { File.Copy(apkBackup, keep1, true); } catch { } }
             if (hasLogs) { try { if (!Directory.Exists(logs)) Directory.Move(logsBackup, logs); } catch { } }
 
-            MessageBox.Show("卸载完成。\n\n保留内容：" + (hasApk ? "\n· receiver-tv.apk" : "") + (hasLogs ? "\n· logs 日志目录" : ""),
+            MessageBox.Show(stuck > 0
+                    ? "卸载完成，但有文件正被占用，已登记为重启后自动删除。\n请重启电脑完成清理。\n\n保留内容：" + (hasApk ? "\n· receiver-tv.apk" : "") + (hasLogs ? "\n· logs 日志目录" : "")
+                    : "卸载完成。\n\n保留内容：" + (hasApk ? "\n· receiver-tv.apk" : "") + (hasLogs ? "\n· logs 日志目录" : ""),
                 App.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)

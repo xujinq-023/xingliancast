@@ -1197,3 +1197,21 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - 安装包 1.0.1 冒烟安装 → 10 个文件齐全 → 启动正常 ✓
 
 **版本**：1.0.1（安装包 / 便携版 / TV APK 全部重建）
+### 77) 卸载不干净 / 重装报「无法写入任何候选目录」（2026-11-14 16:35，v1.0.2）
+**现象**：1.0.0 卸载提示未正确卸载 → 装 1.0.1 时所有候选目录 `UnauthorizedAccessException`。
+
+**原因**
+1. 卸载时程序仍在运行 / 无管理员权限 → `C:\Program Files\XingLianCast` 残留且部分文件被占用，
+   卸载代码只 `try{ Delete }catch{}` 一次，失败也不报告、不登记重启删除。
+2. 安装的候选目录太少（只有 preferred / LocalAppData / UserProfile / ProgramFiles 四个），
+   一处被拒就全盘失败。
+
+**修复**
+- 卸载：删除改为**最多 3 次重试**；仍失败则逐文件删除并对残留登记 `MoveFileEx(..., DELAY_UNTIL_REBOOT)`，
+  提示「请重启电脑完成清理」；不再无条件重建安装目录（只在需要保留 APK/日志时创建）
+- 安装：候选目录从 4 个扩到 11 个
+  `Program Files → %LOCALAPPDATA%\Programs → %LOCALAPPDATA% → %USERPROFILE%\Programs → %USERPROFILE%
+   → Public 文档 → 非系统盘根目录（D:\XingLianCast…）→ 同名 -2/-3/-4 → %TEMP%`
+- 新增 `installer\dist\清理旧版本.bat`（管理员运行）：停进程、takeown+icacls、删残留目录与快捷方式、清卸载项
+
+**实测**：1.0.2 静默安装到指定目录 → 10 个文件齐全 ✓（本机沙盒禁止写 C: 与 D:\ 根目录，故仅验证自定义目录路径）
