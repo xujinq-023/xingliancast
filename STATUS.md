@@ -1345,3 +1345,11 @@ icacls XingLianCast-Setup-1.0.4.exe
 
 校验：安装包 SHA256 与本地一致、版本 1.0.4.0、签名 Valid / CN=XingLianCast。
 合计 28.5 MB / 1088 文件。
+### 84) NAS 同步补齐（含新 APK）（2026-11-14 19:25）
+NAS 恢复后重新同步 `\\10.5.9.6\Images and Software\XingLianCast\2026-11-14-v1.0.4\`：
+- 用 **versionCode=104 / versionName=1.0.4** 的新 APK 重新打包 payload → 重建 `XingLianCast-Setup-1.0.4.exe`（重新签名）
+- dist 全部经 `icacls /reset` + `/setintegritylevel Medium` 处理后再上传（避免再出现 Low 标签）
+- build\ 同步最新的 `XingLianCast.exe` / `XingLianCastSender.exe` / `receiver-tv-debug.apk`
+
+校验：安装包 v1.0.4.0 签名 Valid；TV APK versionCode=104；安装包 SHA256 与本地一致；
+合计 28.5 MB / 1088 文件。
