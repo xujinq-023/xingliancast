@@ -1171,3 +1171,29 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - GitHub：`https://github.com/xujinq-023/XingLianCast`（32 提交，`main` 与远端同步）
 - NAS：`\\10.5.9.6\Images and Software\XingLianCast\2026-11-14\`（source 20.2 MB + dist 5.4 MB + build 2.6 MB + 加密私钥）
 - 离线：`D:\Share\XingLianCast-signing-backup-20261114.7z`
+### 76) 两台电脑同时投同一台电视：先连优先（2026-11-14 16:28，v1.0.1）
+**问题**：局域网两台 PC 同时投同一 TV 时，后连的会把 `peer` 覆盖掉，两路流互相打断。
+
+**规则**：先连的优先；后来者被拒绝并提示，不能踢掉现有会话。
+
+**电视端（RxEngine）**
+- 新增 `BUSY_WINDOW_MS = 5000`：当前会话 5 秒内有包 → 视为占线
+- 接收循环先判来源 IP：
+  - 占线 且 `srcIp != 当前 peer` → 丢弃该包（不改 peer、不打断现网），并 `refuse(srcIp)`
+  - 否则照常接管
+- `refuse()`：向 `<新PC>:45692` 回 `PJS/B1\nbusy=1`（同一 IP 1.5 秒内只回一次），
+  同时 `sink.onEvent("b2")` → 电视顶部横幅「另一台电脑尝试投屏，已拒绝（先连的设备优先）」
+- 当前 PC 发 `bye` 或超过 5 秒无包（崩溃/关机）→ 会话自动释放，他人可接管
+- 顺带修正：`lastRxWall` 之前从未赋值（占线/空闲判断一直是假），现在按「当前会话收包时间」更新
+
+**电脑端**
+- `feedback.h`：解析 `PJS/B1` → `Snapshot.busy = true`
+- `main.cpp`：检测到 busy → 日志 + `stderr: TV_BUSY` + `g_stop`，退出码 **5**
+- UI：退出码 5 → 停止、**不自动重试**、弹「电视正在被另一台电脑投屏（先连的设备优先）」、状态显示「电视被占用」
+
+**实测**
+- 引擎：投屏中注入 `PJS/B1 busy=1` → 退出码 5、stderr `TV_BUSY` ✓
+- UI：注入后弹出「星联投屏 · 设备忙」对话框 ✓
+- 安装包 1.0.1 冒烟安装 → 10 个文件齐全 → 启动正常 ✓
+
+**版本**：1.0.1（安装包 / 便携版 / TV APK 全部重建）

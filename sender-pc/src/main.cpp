@@ -274,6 +274,7 @@ static Cfg ParseArgs(int argc, char** argv) {
 
 static int g_trialUsedSec = 0;
 static bool g_licensed = true;
+static bool g_tvBusy = false;      // 电视已被另一台电脑占用
 
 // ---------- 编码器配置记忆 ----------
 // 某些 Intel QSV 驱动「创建成功但一帧不出」，探测要 2~3 秒；把上次可用的组合记下来，
@@ -937,6 +938,12 @@ auto tick = [&]() {
         last_bytes = nb; last_abytes = nab;
         feedback.Tick(now);
         fb::Snapshot fs = feedback.Get();
+        if (fs.busy && !g_tvBusy) {
+          g_tvBusy = true;
+          Logf("[提示] 电视正在被另一台电脑投屏（先连的设备优先），本机停止投屏。");
+          fprintf(stderr, "TV_BUSY\n");
+          g_stop = true;
+        }
         lastSecFrames = (int)frames;
         if (fs.alive && fs.lost > 0) needIdr = true;   // 电视报丢包：立刻补 IDR，避免长期黑屏
         char line[768];
@@ -1172,5 +1179,6 @@ auto tick = [&]() {
     return 9;
   }
   logx::Shutdown();
+  if (g_tvBusy) return 5;          // 电视被另一台电脑占用
   return 0;
 }

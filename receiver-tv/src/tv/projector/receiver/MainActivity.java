@@ -100,6 +100,7 @@ public class MainActivity extends Activity {
                 else if ("lk".equals(ev)) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("ul".equals(ev)) { locked = false; lastKey = null; }
                 else if ("sw".equals(ev)) showBanner("被投显示器已断开，已切换到主显示器");
+                else if ("b2".equals(ev)) showBanner("另一台电脑尝试投屏，已拒绝（先连的设备优先）");
                 else if ("pz".equals(ev) && !locked) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("rs".equals(ev) && locked) { locked = false; lastKey = null; }
             }
@@ -196,7 +197,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0");
+        ver.setText("星联投屏 TV  v1.0.1");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);

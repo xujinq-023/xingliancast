@@ -1225,7 +1225,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0    Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.1  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2042,7 +2042,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.1  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2516,6 +2516,19 @@ class LogoBox : Panel
                     BeginInvoke((Action)delegate
                     {
                         // 引擎因未授权/试用用尽退出（exit 3）→ 引导注册，不再自动重试
+                        // 电视已被另一台电脑投屏（exit 5）→ 明确提示，不自动重试
+                        if (exitCode == 5)
+                        {
+                            _wantCast = false;
+                            StopTrialClock();
+                            SetState("电视被占用", 3);
+                            ResetMetrics();
+                            UpdateButtons();
+                            MessageBox.Show(this,
+                                "电视正在被另一台电脑投屏（先连的设备优先）。\n\n请等对方停止投屏后再试。",
+                                "星联投屏 · 设备忙", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return;
+                        }
                         if (exitCode == 3)
                         {
                             _wantCast = false;

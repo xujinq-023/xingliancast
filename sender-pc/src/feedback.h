@@ -25,6 +25,7 @@ struct Snapshot {
   long  adrop   = 0;
   int   w = 0, h = 0;
   double rttMs  = -1;      // 网络往返（ping/pong）
+  bool  busy    = false;   // 电视已被另一台电脑占用（TV 回 "PJS/B1 busy=1"）
 };
 
 class Feedback {
@@ -89,6 +90,15 @@ class Feedback {
         lastRx_ = std::chrono::steady_clock::now();
         hasRx_ = true;
         snap_.alive = true;
+        continue;
+      }
+      if (text.rfind("PJS/B1", 0) == 0) {
+        // 电视忙：另一台电脑正在投屏
+        std::lock_guard<std::mutex> lk(mu_);
+        snap_.busy = true;
+        snap_.alive = true;
+        lastRx_ = std::chrono::steady_clock::now();
+        hasRx_ = true;
         continue;
       }
       if (text.rfind("PJS/F1", 0) != 0) continue;

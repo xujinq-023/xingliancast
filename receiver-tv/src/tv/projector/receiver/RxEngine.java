@@ -113,7 +113,9 @@ public final class RxEngine {
     private volatile long lastAudioMs;
     private volatile long lastFrameWall;     // 最近一次真正解出帧的墙上时间
     private volatile boolean pauseShown;     // 已提示"画面已暂停"
-    private volatile long lastRxWall;        // 最近一次收到任何包
+    private volatile long lastRxWall;        // 最近一次收到「当前会话」的包（占线判断用）
+    private static final long BUSY_WINDOW_MS = 5000;   // 超过 5 秒没包视为空闲，允许他人接管
+    private final java.util.HashMap<String, Long> denied = new java.util.HashMap<>();  // 拒绝节流
     private volatile String pcName = "";      // 电脑端计算机名（由 hn 指令上报）
     private volatile String pcPort = "";      // 电脑端 UDP 端口
     // 独立丢包统计（不影响重组逻辑）：只按"相邻收到的视频序号差"累加
@@ -241,6 +243,24 @@ public final class RxEngine {
         } catch (Throwable ignored) { }
     }
 
+    /** 已有电脑在投屏时，通知后来者「电视忙」，并保持当前会话不被打断。 */
+    private void refuse(String ip, long nowW) {
+        Long last = denied.get(ip);
+        if (last != null && nowW - last < 1500) return;      // 同一台 1.5 秒内只回一次
+        denied.put(ip, nowW);
+        if (denied.size() > 32) denied.clear();
+        try {
+            DatagramSocket s = fbSock;
+            if (s == null) { s = new DatagramSocket(); fbSock = s; }
+            byte[] b = "PJS/B1\nbusy=1".getBytes(StandardCharsets.UTF_8);
+            s.send(new DatagramPacket(b, b.length, InetAddress.getByName(ip), 45692));
+            android.util.Log.i("PJS", "busy: refuse " + ip);
+        } catch (Throwable ignored) { }
+        main.post(new Runnable() {
+            @Override public void run() { sink.onEvent("b2"); }
+        });
+    }
+
     private boolean bind() {
         try {
             DatagramSocket s = new DatagramSocket(null);
@@ -275,8 +295,20 @@ public final class RxEngine {
                 continue;
             }
             if (!running) break;
-            lastRxMs = SystemClock.elapsedRealtime();
-            peer = got.getAddress() == null ? "?" : got.getAddress().getHostAddress();
+            long nowW = SystemClock.elapsedRealtime();
+            lastRxMs = nowW;
+            InetAddress src = got.getAddress();
+            String srcIp = src == null ? "?" : src.getHostAddress();
+            String cur = peer;
+            boolean hasSession = cur != null && !cur.equals("-") && !cur.equals("?");
+            boolean hot = hasSession && lastRxWall > 0 && (nowW - lastRxWall) < BUSY_WINDOW_MS;
+            if (hot && !srcIp.equals(cur)) {
+                // 已有电脑在投屏：后来者一律拒绝，且不切换会话（先连的优先）
+                refuse(srcIp, nowW);
+                continue;
+            }
+            peer = srcIp;
+            lastRxWall = nowW;
             if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); aLastSeq = -1; }
             parse(got.getData(), got.getOffset(), got.getLength());
         }
