@@ -1125,3 +1125,11 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 
 **另一个独立问题**：该日志里 `rtt≈1280ms`（本机实测 160ms），网络往返极慢，
 建议检查笔记本是否连的 2.4G WiFi / 与电视是否同网段；`tvdrop=158` 也说明链路差。
+### 73) 修复安装/卸载按钮的黑框（2026-11-14 15:52）
+**现象**：卸载窗口的「卸载」「取消」按钮外圈有一圈黑色矩形，安装窗口同样。
+**原因**：`FlatButton` 开了 `ControlStyles.AllPaintingInWmPaint`，框架不再单独刷背景；
+而 `OnPaint` 只画了圆角矩形，**四角之外的区域没被填充**，露出未初始化的黑色。
+**修复**（`installer\setup\Setup.cs` → `FlatButton`）
+1. `OnPaint` 开头先用 `BackColor` 填满 `ClientRectangle`（透明时取父窗体底色）
+2. 构造函数把 `BackColor` 设为 `T.Bg`，与窗体一致
+**实测**：卸载窗口、安装窗口的按钮均恢复正常圆角填充，无黑框。

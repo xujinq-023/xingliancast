@@ -358,12 +358,17 @@ class FlatButton : Button
         ForeColor = Color.White;
         Font = T.F(13.5f);
         Cursor = Cursors.Hand;
+        BackColor = T.Bg;          // 与窗体底色一致，圆角外不会被刷成黑色
     }
     protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        // AllPaintingInWmPaint 下不再单独刷背景：圆角外四个角必须自己填，否则露出黑边
+        Color bgc = BackColor;
+        if (bgc.A == 0 || bgc == Color.Transparent) bgc = (Parent != null ? Parent.BackColor : T.Bg);
+        using (var bg = new SolidBrush(bgc)) g.FillRectangle(bg, ClientRectangle);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         T.Rounded(g, new Rectangle(0, 0, Width - 1, Height - 1), T.I(8), _hover ? FillHover : Fill, Color.Transparent);
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, ForeColor,
