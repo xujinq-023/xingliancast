@@ -49,6 +49,17 @@ static class MakeLicense
         }
 
         if (mode == "auto") mode = LocalMachineCode();
+        else
+        {
+            // 机器码归一：允许无横线/小写，统一成 XXXX-XXXX-XXXX，避免发出"看起来正常"的无效码
+            string norm = mode.Replace("-", "").Replace(" ", "").Trim().ToUpperInvariant();
+            if (norm.Length != 12)
+            {
+                Console.WriteLine("错误：机器码应为 12 位十六进制（如 E00C-2577-C37A），实际 \"" + mode + "\"");
+                return 2;
+            }
+            mode = norm.Substring(0, 4) + "-" + norm.Substring(4, 4) + "-" + norm.Substring(8, 4);
+        }
 
         if (!Has(args, "/days") && !Has(args, "/machine")) { PrintUsage(); return 1; }
 
@@ -59,9 +70,20 @@ static class MakeLicense
             return 0;
         }
 
+        // /days 必须显式给出且合法：0 = 永久，正整数 = 天数。
+        // 旧版 `int.TryParse(ds, out days)` 丢弃结果，笔误（如 "365d"）会被当成 0 → 发成永久授权。
         int days = 0;
         string ds = GetArg(args, "/days");
-        if (ds != null) int.TryParse(ds, out days);
+        if (ds == null)
+        {
+            Console.WriteLine("错误：缺少 /days。永久请写 /days 0，一年请写 /days 365。");
+            return 2;
+        }
+        if (!int.TryParse(ds.Trim(), out days) || days < 0 || days > 36500)
+        {
+            Console.WriteLine("错误：/days 的值 \"" + ds + "\" 无效（0 = 永久，或 1~36500 的天数）。");
+            return 2;
+        }
 
         string priv = File.ReadAllText(privPath);
         var prm2 = new ECParameters();
@@ -89,6 +111,13 @@ static class MakeLicense
         {
             ec.ImportParameters(prm2);
             using (var sha = SHA256.Create()) sig = ec.SignHash(sha.ComputeHash(payload));
+        }
+        // 引擎只接受 r||s 固定 64 字节（license.h: verify 里判 12+64）。若这里输出成 DER，
+        // 客户会拿到"看起来正常"却永远注册失败的码，所以必须在签发端拦住。
+        if (sig.Length != 64)
+        {
+            Console.WriteLine("错误：签名长度为 " + sig.Length + " 字节（应为 64）。请检查 .NET 运行时版本。");
+            return 3;
         }
 
         byte[] all = new byte[12 + sig.Length];
