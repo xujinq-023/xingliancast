@@ -27,7 +27,7 @@ final class Logx {
     private static File dir;
     private static File file;
     private static long maxBytes = 5L << 20;      // default 5 MB (UI: 5..100)
-    private static volatile boolean enabled = false;
+    private static volatile boolean enabled = true;   // debug 包默认开：便于 adb pull 日志
 
     private Logx() { }
 

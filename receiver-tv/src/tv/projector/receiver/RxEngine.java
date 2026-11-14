@@ -258,13 +258,18 @@ public final class RxEngine {
      * 阻塞数百毫秒甚至 1 秒，期间接收线程不读包，正在投屏的那路流就会卡顿/黑一下（实测 bug）。
      * 所以这里只做「记账」，真正的发送交给独立的单线程执行。
      */
-    private void refuse(final InetAddress src, final String ip, long nowW) {
+    private void refuse(final InetAddress src, final String ip, long nowW) { refuse(src, ip, nowW, ""); }
+
+    private void refuse(final InetAddress src, final String ip, long nowW, final String why) {
         if (src == null) return;
         Long last = denied.get(ip);
         if (last != null && nowW - last < 1500) return;      // 同一台 1.5 秒内只回一次
         denied.put(ip, nowW);
-        if (denied.size() > 32) denied.clear();
-        refuser.execute(new Runnable() {
+        Logx.i("busy-refuse " + ip + " (" + why + ")");   // 每 1.5 秒最多一条，别在收包循环里逐包写盘
+        java.util.concurrent.ExecutorService ex = refuser;      // 可能已被 stop() 置空
+        if (ex == null) return;
+        try {
+        ex.execute(new Runnable() {
             @Override public void run() {
                 try {
                     DatagramSocket s = refuseSock;
@@ -274,6 +279,7 @@ public final class RxEngine {
                 } catch (Throwable ignored) { }
             }
         });
+        } catch (Throwable ignored) { }                            // 线程池已关闭等异常不能拖垮接收线程
         main.post(new Runnable() {
             @Override public void run() { sink.onEvent("b2"); }
         });
@@ -325,19 +331,21 @@ public final class RxEngine {
                                       || (lastFrameWall > 0 && (nowMs2 - lastFrameWall) < 3000));
             if (hot && !srcIp.equals(cur)) {
                 // 已有电脑在投屏：后来者一律拒绝，且不切换会话（先连的优先）
-                refuse(src, srcIp, nowW);
+                refuse(src, srcIp, nowW, "peer=" + cur + " rxWall=" + (nowW - lastRxWall) + "ms frameWall=" + (nowMs2 - lastFrameWall) + "ms");
                 continue;
             }
             lastRxMs = nowW;
+            if (!srcIp.equals(cur)) Logx.i("accept new peer " + srcIp + " (prev=" + cur + ")");
             peer = srcIp;
             lastRxWall = nowW;
             if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); aLastSeq = -1; }
-            parse(got.getData(), got.getOffset(), got.getLength());
+            try { parse(got.getData(), got.getOffset(), got.getLength(), srcIp); }
+            catch (Throwable t) { Logx.e("parse failed: " + t); }
         }
         try { socket.close(); } catch (Throwable ignored) { }
     }
 
-    private void parse(byte[] d, int off, int len) {
+    private void parse(byte[] d, int off, int len, String srcIp) {
         if (len < H) return;
         if (d[off] != 0x50 || d[off + 1] != 0x4A) return;      // magic 'P','J'
         int type = d[off + 2] & 0xFF;
@@ -352,15 +360,21 @@ public final class RxEngine {
         byte[] payload = Arrays.copyOfRange(d, off + H, off + H + plen);
         if (type == T_VIDEO) stepVideo(seq, tslo, flags, kind, payload);
         else if (type == T_META) stepMeta(seq, tslo, flags, payload);
-        else if (type == T_CTRL) stepCtrl(payload);
+        else if (type == T_CTRL) stepCtrl(payload, srcIp);
         else stepAudio(seq, flags, payload);
     }
 
     /** Control packet (CTRL): "bye" = sender stopped casting; drop the decoder right away so
      *  the TV leaves the frozen frame immediately instead of waiting for the idle timeout. */
-    private void stepCtrl(byte[] payload) {
+    private void stepCtrl(byte[] payload, String srcIp) {
         String s = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
         if (s.startsWith("p")) { sendPong(payload); return; }
+        // 只接受「当前会话」发来的 bye / 锁屏事件；被拒绝的后来者也会发 bye，绝不能因此断掉正在投屏的会话
+        boolean fromOwner = srcIp == null || srcIp.equals(peer);
+        if (!fromOwner && (s.startsWith("bye") || s.startsWith("lk") || s.startsWith("ul") || s.startsWith("sw"))) {
+            Logx.i("ignore " + s.substring(0, Math.min(3, s.length())) + " from non-owner " + srcIp + " (owner=" + peer + ")");
+            return;
+        }
         if (s.startsWith("hi")) {
             pipe.sendEmptyMessage(MSG_CTRL_HELLO);   // 日志放在 pipe 线程，去重后只打一条
             return;
@@ -640,8 +654,10 @@ public final class RxEngine {
                 // 重建会让当前流丢到下一个 IDR（实测约 1 秒黑屏/冻结），表现为"第二台电脑连入时电视断开一秒"。
                 if (lastFrameWall > 0 && (System.currentTimeMillis() - lastFrameWall) < 2000 && !waitingIdr) {
                     Log.i(TAG, "hello ignored: session is active");
+                    Logx.i("hello ignored (session active, frameWall ago=" + (System.currentTimeMillis() - lastFrameWall) + "ms)");
                     break;
                 }
+                Logx.i("hello -> reset codec + wait IDR");
                 Log.i(TAG, "sender hello -> reset + reconfig");
                 Logx.i("sender connected (hello)");
                 asmReset = true;

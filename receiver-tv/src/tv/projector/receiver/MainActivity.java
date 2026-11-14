@@ -88,6 +88,16 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         Logx.init(this);
+        // 记录未捕获异常到文件（adb pull 可读），避免"电视闪一下等待页"却查不到原因
+        try {
+            final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+            Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                @Override public void uncaughtException(Thread t, Throwable e) {
+                    try { Logx.e("FATAL in " + t.getName() + ": " + android.util.Log.getStackTraceString(e)); } catch (Throwable ignored) { }
+                    if (prev != null) prev.uncaughtException(t, e);
+                }
+            });
+        } catch (Throwable ignored) { }
 
         engine = new RxEngine(new RxEngine.UiSink() {
             @Override public void onStatus(String text) {
@@ -197,7 +207,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0.7");
+        ver.setText("星联投屏 TV  v1.0.10");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);

@@ -1388,3 +1388,22 @@ NAS 恢复后重新同步 `\\10.5.9.6\Images and Software\XingLianCast\2026-11-1
 
 **版本**：TV `versionCode 107 / 1.0.7`（屏显 v1.0.7）；PC 安装包 1.0.6
 **NAS**：`...\XingLianCast\2026-11-14-v1.0.6\`（28.5 MB / 1088 文件）
+### 87) 找到「电视闪回等待页」的真凶：被拒者发来的 bye（TV 1.0.10 / PC 1.0.7，2026-11-14 20:20）
+**关键发现**：第二台电脑被拒绝后会**退出并发送 bye**。电视端原先对任何 `bye` 都执行
+`peer="-" + releaseCodec()`，等于把「正在投屏的那台」的会话也关掉了 → 画面切回等待页，随后
+第一台的包又被当作新会话接入（约 1 秒空窗）。这与用户描述的「短暂出现等待电脑投屏」完全吻合。
+
+**修复**
+- `stepCtrl(payload, srcIp)`：`bye / lk / ul / sw` 只接受**当前会话（owner）**发来的，其它来源忽略并记日志
+- 保留：忙时直接丢弃后来者的所有包（含 bye），不再影响当前会话
+- 顺带把 `refuse` 的日志从「逐包写盘」改为「每 1.5 秒一次」，避免收包线程因写日志而变慢
+
+**电视端日志可拉取了**（关键能力）
+- `Logx` 默认开启（debug 包），路径 `Android/data/tv.projector.receiver/files/logs/receiver.log`
+- 拉取：`adb pull /sdcard/Android/data/tv.projector.receiver/files/logs/receiver.log`
+- 已记录：`accept new peer` / `busy-refuse` / `ignore bye from non-owner` / `hello -> reset` / `FATAL` / 每秒 `stat`
+- MainActivity 加了未捕获异常处理，崩溃会把堆栈写进同一个文件
+
+**实测**（本机别名 IP 10.5.9.111 模拟第二台，含 700 包/秒 的真实码率冲击 + 连发 3 个 bye）
+- 电视 `stat fps=60`、`dropAu=0`，pid 未变（无重启）
+- 第二台被 `busy-refuse`，其 `bye` 被丢弃，第一台画面全程 60fps ✅
