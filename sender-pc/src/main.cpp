@@ -275,6 +275,28 @@ static Cfg ParseArgs(int argc, char** argv) {
 static int g_trialUsedSec = 0;
 static bool g_licensed = true;
 
+// ---------- 编码器配置记忆 ----------
+// 某些 Intel QSV 驱动「创建成功但一帧不出」，探测要 2~3 秒；把上次可用的组合记下来，
+// 下次启动直接用它，避免每次都重走失败探测（实测新机器要 5~7 秒才出第一帧）。
+// 格式： "sw|1"（软件编码器 + GPU 转换） / "hw|2"（硬件 + 纹理直入）
+static void EncProfileLoad(bool& sw, int& mode) {
+  sw = false; mode = -1;
+  std::string s = lic::store_read("encoder.cfg");
+  if (s.size() < 3) return;
+  size_t bar = s.find('|');
+  if (bar == std::string::npos) return;
+  int m = atoi(s.c_str() + bar + 1);
+  if (m < 0 || m > 2) return;
+  sw = (s.substr(0, bar) == "sw");
+  mode = m;
+}
+static void EncProfileSave(bool sw, int mode) {
+  char b[32];
+  snprintf(b, sizeof b, "%s|%d", sw ? "sw" : "hw", mode);
+  lic::store_write("encoder.cfg", b);
+}
+
+
 int main(int argc, char** argv) {
   setvbuf(stdout, nullptr, _IONBF, 0);
   SetConsoleOutputCP(65001);
@@ -549,7 +571,16 @@ int main(int argc, char** argv) {
         dxgm.Reset();
     }
     H264Encoder enc;
-    if (!enc.Create(ew, eh, cfg.fps, cfg.bitrate, cfg.hw, dxgm.Get(), dxgtok)) { Logf("H.264 编码器创建失败\n"); return 4; }
+    bool profSw = false; int profMode = -1;
+    EncProfileLoad(profSw, profMode);
+    bool wantHw = cfg.hw && !profSw;
+    if (profSw) Logf("编码器: 上次记录硬件不可用，直接用软件编码器（跳过探测）\n");
+    if (!enc.Create(ew, eh, cfg.fps, cfg.bitrate, wantHw, dxgm.Get(), dxgtok)) {
+      if (wantHw) {
+        Logf("编码器: 硬件创建失败，改用软件编码器\n");
+        if (!enc.Create(ew, eh, cfg.fps, cfg.bitrate, false, nullptr, 0)) { Logf("H.264 编码器创建失败\n"); return 4; }
+      } else { Logf("H.264 编码器创建失败\n"); return 4; }
+    }
     int mode = 0;   // 输入路径: 0=CPU 转换 1=GPU 转换+NV12 回读 2=GPU 纹理直入
     int texfail = 0;
     int memfail = 0;   // 模式1(NV12 内存输入)连续失败次数
@@ -559,6 +590,7 @@ int main(int argc, char** argv) {
       bool wantTex = enc.d3d() && getenv("PJS_TEXTURE") != nullptr;
       mode = wantTex ? 2 : (stageNV12 ? 1 : 0);
     }
+    if (profMode >= 0 && !(profMode == 2 && !enc.d3d())) mode = profMode;   // 沿用上次成功的输入方式
     Logf("编码器: %s  输入: %s\n", enc.hw() ? "硬件(MFT)" : "软件(MS)",
            mode == 2 ? "GPU 纹理(零拷贝)" : mode == 1 ? "GPU 转换+NV12 拷贝" : "CPU 转换");
 
@@ -596,6 +628,7 @@ int main(int argc, char** argv) {
     uint64_t lastRescueMs = startMs;   // 编码器看门狗：上一次尝试切换输入/编码器的时间
     uint64_t lastIdrMs = GetTickCount64();             // 上一次发出关键帧的时间
     bool needIdr = false;                              // 需要立刻补一个 IDR（丢包/首帧丢失）
+    bool profSaved = false;                            // 是否已把可用编码器配置落盘
     int lastSecFrames = 0;                             // 上一秒实际编码帧数（判断桌面是否静止）
     auto on_au = [&](const uint8_t* au, size_t n, bool key, bool idr) {
       LARGE_INTEGER q; QueryPerformanceCounter(&q);
@@ -928,6 +961,7 @@ auto tick = [&]() {
           Logf("%s", cl);
         }
         Logf("%s", line);
+        if (!profSaved && total_au > 0) { EncProfileSave(!enc.hw(), mode); profSaved = true; }
         last_send_err = e;
         n_acq = n_lim = 0; gap_max = 0; gap_big = 0; tgap_max = 0;
         t0 = now; frames = 0; conv_us = enc_us = 0;
@@ -935,7 +969,7 @@ auto tick = [&]() {
       // 看门狗：编码器 3 秒一帧都没吐出来（async MFT 可能既不报错也不出帧，实测 Intel QSV）
       // → 依次切换输入方式，最后换成软件编码器，保证一定有画面。
       static int rescueStep = 0;
-      if (!g_noenc && total_au == 0 && rescueStep < 3 && now - lastRescueMs > 1500) {
+      if (!g_noenc && total_au == 0 && rescueStep < 3 && now - lastRescueMs > 900) {
         lastRescueMs = now;
         rescueStep++;
         if (rescueStep == 1 && mode != 2 && enc.d3d() && dev && enc.NextInputTex(dev.Get()) != nullptr) {
@@ -958,9 +992,9 @@ auto tick = [&]() {
       }
       // 诊断：启动 5 秒后依然一帧都没编码出来 → 明确报错并给出上下文，避免"不报错但没画面"
       static bool noFrameWarned = false;
-      if (!g_noenc && !noFrameWarned && total_au == 0 && now - startMs > 5000) {
+      if (!g_noenc && !noFrameWarned && total_au == 0 && now - startMs > 8000) {
         noFrameWarned = true;
-        Logf("[错误] 启动 5 秒仍无视频帧：输出=%dx%d 编码模式=%d 采集到帧=%llu 限帧丢弃=%llu "
+        Logf("[错误] 启动 8 秒仍无视频帧：输出=%dx%d 编码模式=%d 采集到帧=%llu 限帧丢弃=%llu "
              "→ 采集或编码失败（请把本文件发回排查）\n",
              ew, eh, mode, (unsigned long long)totalAcq, (unsigned long long)totalLim);
       }
