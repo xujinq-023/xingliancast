@@ -50,8 +50,8 @@ Invoke-Tool (Join-Path $Bt 'aapt2.exe') (@(
     '-I', $AndroidJar,
     '--manifest', (Join-Path $Root 'AndroidManifest.xml'),
     '--min-sdk-version', '24',
-    '--version-code', '110',
-    '--version-name', '1.0.10'
+    '--version-code', '111',
+    '--version-name', '1.0.11'
 ) + $ResFlags) | Out-Null
 
 # ---------- 3. javac ----------

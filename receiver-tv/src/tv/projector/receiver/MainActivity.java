@@ -66,6 +66,13 @@ public class MainActivity extends Activity {
         }
     };
     private boolean errorState;
+    // 提示条超时：只负责把提示条收起来，绝不能动画面（旧版用的是 bannerTimeout，
+    // 那个 Runnable 会强制 showIdle()，导致「另一台电脑尝试投屏」提示 3 秒后画面被切回等待页）
+    private final Runnable bannerHide = new Runnable() {
+        @Override public void run() {
+            if (bannerView != null) bannerView.setVisibility(View.GONE);
+        }
+    };
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final Runnable idleReset = new Runnable() {
         @Override public void run() {
@@ -207,7 +214,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0.10");
+        ver.setText("星联投屏 TV  v1.0.11");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);
@@ -338,6 +345,7 @@ public class MainActivity extends Activity {
         if (streaming) {
             uiHandler.removeCallbacks(idleReset);
             uiHandler.removeCallbacks(bannerTimeout);
+            uiHandler.removeCallbacks(bannerHide);
             if (bannerView != null) bannerView.setVisibility(View.GONE);
             hideIdle();
             updateInfoBar(text);
@@ -515,8 +523,8 @@ public class MainActivity extends Activity {
         if (bannerView == null) return;
         bannerView.setText(text);
         bannerView.setVisibility(View.VISIBLE);
-        uiHandler.removeCallbacks(bannerTimeout);
-        uiHandler.postDelayed(bannerTimeout, 3000);
+        uiHandler.removeCallbacks(bannerHide);
+        uiHandler.postDelayed(bannerHide, 3000);
     }
 
     private void setSub(String s, int color) {
