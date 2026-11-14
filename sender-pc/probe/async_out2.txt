@@ -1,6 +1,0 @@
-start
-d3d ok
-setup ok
-hw enum: hr=0x00000000 n=12
-== try [0] NVIDIA H.264 Encoder MFT (async=1)
-  unlock 0x00000000

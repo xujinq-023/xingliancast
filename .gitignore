@@ -36,3 +36,10 @@ sender-pc/ui/icon_*.png
 sender-pc/ui/logo_*.png
 sender-pc/ui/*_s.png
 installer/setup/*.png
+
+# test scratch
+sender-pc/probe/*_out*.txt
+sender-pc/probe/keygen*.cs
+installer/tools/last-license.txt
+*_snippet.txt
+receiver-tv/lock_overlay_snippet.txt
