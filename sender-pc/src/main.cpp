@@ -891,19 +891,6 @@ auto tick = [&]() {
           first = true;                     // 两条路径都从关键帧重新开始
           haveFrame = false;
         }
-        static bool p1 = false, p2 = false;
-        uint64_t el = now - startMs;
-        if (el > 4000 && !p1) {
-          p1 = true; makePauseFrame(); g_paused = true; out.send_lock();
-          Logf("[diag] 强制暂停（等价锁屏）\n");
-        }
-        if (el > 12000 && !p2) {
-          p2 = true; g_paused = false;
-          if (useDDA) { HRESULT hpg = initDDA(); (void)hpg; }
-          first = true; haveFrame = false;
-          out.send_unlock();
-          Logf("[diag] 强制恢复\n");
-        }
       }
       // 诊断：PJS_FAKE_LOCK=1 → 3 秒发 lk、8 秒发 ul，用来自测电视端遮罩（无需真的锁屏）
       if (getenv("PJS_FAKE_LOCK")) {
