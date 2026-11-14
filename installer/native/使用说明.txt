@@ -1,0 +1,27 @@
+XingLianCast 绿色安装（不依赖 .NET 安装程序）
+================================================
+
+适用：双击 XingLianCast-Setup-*.exe 报「无法写入任何候选目录」的机器。
+原理：只用 Windows 自带的 cmd / xcopy / reg / certutil / cscript 完成安装，
+      完全绕开 .NET 安装程序可能被安全软件限制的问题。
+
+步骤
+----
+1. 把整个文件夹解压到任意位置（例如 D:\XL-Setup）
+2. 右键 1-INSTALL.bat → 「以管理员身份运行」
+3. 安装完成会自动启动程序；桌面和开始菜单会有快捷方式
+
+默认安装到：C:\Program Files\XingLianCast
+想换位置：用记事本打开 1-INSTALL.bat，改这一行
+    set "DST=%ProgramFiles%\XingLianCast"
+例如改成
+    set "DST=D:\XingLianCast"
+
+卸载
+----
+右键 2-UNINSTALL.bat → 以管理员身份运行
+
+说明
+----
+- 授权文件保存在 %LOCALAPPDATA%（卸载不会删除）
+- 如果仍然失败，把弹出的命令行窗口截图发给我们

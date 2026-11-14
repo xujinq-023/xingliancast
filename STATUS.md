@@ -1246,3 +1246,28 @@ OK  D:\XingLianCast
 
 **环境事实**：该机装有 **火绒安全软件**（Defender 实时防护已关闭），火绒加固也可能拦截未知程序写盘；
 排查时建议同时把安装包加入火绒白名单。
+### 79) 安装全部目录被拒：定位为「进程被降权」+ 提供纯 cmd 绿色安装（2026-11-14 16:55）
+**实测（本机 = 用户报障机 DESKTOP-HARVEY）**
+| 探测方式 | 完整性 | 写 7 个目标目录 |
+|---|---|---|
+| `cmd` + `whoami` | **High (0x3000)** | **全部 OK**（含 Program Files、D:\XingLianCast） |
+| 安装程序 `--tokeninfo` | **Low (0x1000)** | 全部 DENY |
+| 计划任务 `HIGHEST` 跑同一 exe | **仍 Low (0x1000)** | 全部 DENY |
+| 新建的原生 C++ 探针（同父进程） | **Low (0x1000)** | DENY |
+
+→ 同一台机器、同一时刻，**系统程序 cmd 是高完整性且可写，而我们的程序被压到低完整性**，
+且**提权也无效**（计划任务最高权限仍为 Low）。这不是 ACL、不是占用，是**进程被降权/沙箱化**。
+该机装有 **火绒安全软件**（HipsDaemon.exe / HipsTray.exe 常驻，Defender 实时防护已关闭），
+其「应用加固/未知程序限制」或其沙箱行为是首要嫌疑。
+
+**对策（不依赖 .NET 安装程序）**
+新增 `installer\native\`：纯 cmd 实现安装/卸载
+- `1-INSTALL.bat`：管理员运行 → xcopy 到 `%ProgramFiles%\XingLianCast`、`certutil` 装证书、
+  `cscript` 建快捷方式、`reg add` 写卸载项、启动程序
+- `2-UNINSTALL.bat`：停进程、删快捷方式与注册项、删目录
+- 已打包 `installer\dist\XingLianCast-绿色安装-1.0.3.zip`，实测复制 9 个文件、注册与快捷方式均成功
+
+**诊断工具**
+- `installer\dist\诊断.bat`：纯 cmd（ps1 可能被执行策略拦），输出提权/完整性/火绒进程/
+  7 个目录写探测/残留 ACL → `%TEMP%\xl-bat-diag.txt`
+- `XingLianCast-Setup-1.0.3.exe --tokeninfo`：直接输出令牌诊断

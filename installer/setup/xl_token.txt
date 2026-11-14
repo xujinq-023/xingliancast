@@ -1,0 +1,1 @@
+用户=DESKTOP-HARVEY\Administrator  管理员=是  完整性=低/受限 (0x1000)
