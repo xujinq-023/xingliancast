@@ -51,9 +51,16 @@ inline void Rotate() {
   if (g_fp) { fflush(g_fp); fclose(g_fp); g_fp = nullptr; }
   std::string old1 = g_path + ".1";
   DeleteFileA(old1.c_str());                       // 覆盖上一代
-  MoveFileA(g_path.c_str(), old1.c_str());
-  g_fp = fopen(g_path.c_str(), "wb");
-  g_written = 0;
+  // 改名前必须确认成功：旧版无论成败都用 "wb" 重开，MoveFile 失败（被占用）时
+  // 会把当前日志清空，正好丢掉出事现场。失败就改为追加写同一文件（宁可不轮换）。
+  bool moved = MoveFileA(g_path.c_str(), old1.c_str()) != 0;
+  g_fp = fopen(g_path.c_str(), moved ? "wb" : "ab");
+  if (!moved) {
+    long pos = g_fp ? ftell(g_fp) : 0;             // ftell 失败(-1)不能当已写字节数，否则每行都触发轮换
+    g_written = (pos > 0) ? (size_t)pos : 0;
+  } else {
+    g_written = 0;
+  }
 }
 
 inline void WriteOne(const std::string& s) {

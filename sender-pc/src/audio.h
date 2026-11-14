@@ -29,6 +29,7 @@ class AudioPipe {
 
   // kbps: AAC 码率。返回 false 表示无默认输出设备/编码器不可用（调用方可降级为纯视频）。
   bool Start(int kbps, const Fn& on_frame) {
+    if (thr_.joinable()) Stop();                    // 旧线程没停就覆盖 thr_ 会泄漏一个不可 join 的线程
     on_ = on_frame;
     stop_ = false; started_ = false; err_ = S_OK;   // 支持 Stop 后再 Start（界面实时开关声音）
     thr_ = std::thread([this, kbps] { Run(kbps); });

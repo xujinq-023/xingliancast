@@ -97,49 +97,6 @@ struct CursorState {
 };
 static CursorState g_cur;
 
-// 把光标按 alpha 混进 NV12 的 Y 平面，并给该 2x2 块设置色度。
-static void BlendCursorNV12(uint8_t* base, int pitch, int W, int H, const CursorState& c) {
-  const int x0 = c.px - (int)c.hotX, y0 = c.py - (int)c.hotY;
-  const bool mono = (c.type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME);
-  const size_t andLen = mono ? (size_t)c.pitch * c.h : 0;
-  uint8_t* uvBase = base + (size_t)H * pitch;
-  for (UINT row = 0; row < c.h; row++) {
-    const int y = y0 + (int)row;
-    if (y < 0 || y >= H) continue;
-    const uint8_t* srow = c.shape.data() + (size_t)row * c.pitch;
-    const uint8_t* xrow = mono ? srow + andLen : nullptr;
-    uint8_t* drow = base + (size_t)y * pitch;
-    for (UINT col = 0; col < c.w; col++) {
-      const int x = x0 + (int)col;
-      if (x < 0 || x >= W) continue;
-      int R, G, B, a = 255;
-      if (c.type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR) {
-        const uint8_t* p = srow + (size_t)col * 4;   // BGRA + alpha
-        B = p[0]; G = p[1]; R = p[2]; a = p[3];
-        if (!a) continue;
-      } else if (c.type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR) {
-        const uint8_t* p = srow + (size_t)col * 4;   // alpha 0 = 透明
-        B = p[0]; G = p[1]; R = p[2];
-        if (!p[3]) continue;
-      } else {                                       // MONOCHROME：AND/XOR 位图
-        const int bit = 7 - ((int)col & 7);
-        const int andB = (srow[col >> 3] >> bit) & 1;
-        const int xorB = (xrow[col >> 3] >> bit) & 1;
-        if (andB && !xorB) continue;                 // 完全透明
-        R = G = B = xorB ? 255 : 0;                  // 白 / 黑（invert 近似为黑）
-      }
-      const int Y = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
-      uint8_t* d = drow + x;
-      *d = (uint8_t)(a >= 250 ? Y : (*d * (255 - a) + Y * a) / 255);
-      if (a >= 128) {                                // 色度：整块取指针颜色即可
-        const int U = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
-        const int V = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
-        uint8_t* uv = uvBase + (size_t)(y >> 1) * pitch + (x & ~1);
-        uv[0] = (uint8_t)U; uv[1] = (uint8_t)V;
-      }
-    }
-  }
-}
 
 // ---------- 光标合成 v2：交给 DrawIconEx 解析，避免自己处理 COLOR/MASKED/MONO 掩码 ----------
 struct CurBitmap {
@@ -258,11 +215,11 @@ static Cfg ParseArgs(int argc, char** argv) {
     std::string k = argv[i];
     auto val = [&]() -> std::string { return (i + 1 < argc) ? std::string(argv[++i]) : std::string(); };
     if (k == "--ip") c.ip = val();
-    else if (k == "--port") c.port = atoi(val().c_str());
-    else if (k == "--bitrate") c.bitrate = atoi(val().c_str());
-    else if (k == "--fps") c.fps = atoi(val().c_str());
-    else if (k == "--height") c.height = atoi(val().c_str());
-    else if (k == "--display") c.display = atoi(val().c_str());
+    else if (k == "--port") { c.port = atoi(val().c_str()); if (c.port < 1 || c.port > 65535) c.port = pjs::DEFAULT_PORT; }
+    else if (k == "--bitrate") { c.bitrate = atoi(val().c_str()); if (c.bitrate < 100) c.bitrate = 100; if (c.bitrate > 100000) c.bitrate = 100000; }
+    else if (k == "--fps") { c.fps = atoi(val().c_str()); if (c.fps < 1) c.fps = 1; if (c.fps > 240) c.fps = 240; }
+    else if (k == "--height") { c.height = atoi(val().c_str()); if (c.height < 0) c.height = 0; if (c.height > 4320) c.height = 4320; }
+    else if (k == "--display") { c.display = atoi(val().c_str()); if (c.display < 0) c.display = 0; if (c.display > 63) c.display = 63; }
     else if (k == "--log") c.logPath = val();
     else if (k == "--log-size") { int mb = atoi(val().c_str()); c.logSizeMB = mb < 5 ? 5 : (mb > 100 ? 100 : mb); }
     else if (k == "--sw") c.hw = false;
@@ -379,7 +336,7 @@ int main(int argc, char** argv) {
   if (!fbOk) Logf("回传端口 45692 绑定失败（电视端状态将不可见）\n");
   Logf("目标 %s:%d  码率 %dkbps  fps %d  偏好%s硬编\n", cfg.ip.c_str(), cfg.port,
          cfg.bitrate, cfg.fps, cfg.hw ? "" : "（禁）");
-  MFStartup(MF_VERSION);
+  if (FAILED(MFStartup(MF_VERSION))) Logf("MFStartup 失败（编码可能不可用）\n");
 
   try {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -467,9 +424,21 @@ int main(int argc, char** argv) {
                    : (int)item.Size().Height;
     // 编码分辨率：--height N 时整数倍降采样（CPU 转换循环步进采样）
     int s = 1;
-    if (cfg.height > 0 && cfg.height * 2 <= h) s = h / cfg.height;
-    if (s < 1) s = 1; if (s > 8) s = 8;
-    int ew = (w / s) & ~1, eh = (h / s) & ~1;
+    int ew = w & ~1, eh = h & ~1;
+    if (cfg.height > 0 && cfg.height < h) {
+      // 目标高度：等比缩放到 cfg.height（宽按比例）。VP 路径能直接输出任意尺寸；
+      // CPU 路径只能整数倍抽样，退化到最近的整数步长。旧逻辑要求 cfg.height*2<=h，
+      // 导致 1080p 选 720 完全不降采样（1440>1080），界面却显示已降分辨率。
+      int ratio = h / cfg.height;
+      if (ratio <= 1) {
+        ew = ((int)((long long)w * cfg.height / h)) & ~1;
+        eh = cfg.height & ~1;
+        if (ew < 2) ew = 2;
+      } else {
+        s = ratio > 8 ? 8 : ratio;
+        ew = (w / s) & ~1; eh = (h / s) & ~1;
+      }
+    }
     Logf("捕获 %dx%d  编码 %dx%d (1/%d)\n", w, h, ew, eh, s);
 
     // ---------- GPU VideoProcessor：一步 BGRA→NV12 + 缩放（需设备带 VIDEO_SUPPORT） ----------
@@ -637,6 +606,7 @@ int main(int argc, char** argv) {
     const uint64_t startMs = GetTickCount64();
     uint64_t lastRescueMs = startMs;   // 编码器看门狗：上一次尝试切换输入/编码器的时间
     uint64_t lastIdrMs = GetTickCount64();             // 上一次发出关键帧的时间
+    uint64_t lastAuMs = GetTickCount64();              // 上一次真正编码出 AU 的时间（看门狗用）
     bool needIdr = false;                              // 需要立刻补一个 IDR（丢包/首帧丢失）
     bool profSaved = false;                            // 是否已把可用编码器配置落盘
     int lastSecFrames = 0;                             // 上一秒实际编码帧数（判断桌面是否静止）
@@ -652,7 +622,8 @@ int main(int argc, char** argv) {
     if (session) { try { session.StartCapture(); } catch (...) {} }
     Logf("已推流: 按 Ctrl+C 退出\n");
 
-    LONGLONG dur100 = 10000000 / cfg.fps;    uint64_t frame_int_us = 1000000 / (uint64_t)cfg.fps;  // 限帧间隔（QPC 微秒，tick 分辨率 15.6ms 不够）
+    const int safeFps = cfg.fps > 0 ? cfg.fps : 60;   // 双保险：任何路径都不允许除零
+    LONGLONG dur100 = 10000000 / safeFps;    uint64_t frame_int_us = 1000000 / (uint64_t)safeFps;  // 限帧间隔（QPC 微秒，tick 分辨率 15.6ms 不够）
     uint64_t last_enc = 0, last_in = 0, last_meta = 0, last_keep = 0, last_ping = 0, conv_us = 0, enc_us = 0, last_send_err = 0;
     uint64_t last_bytes = 0, last_abytes = 0;   // 每秒流量统计
     bool haveFrame = false; uint64_t lastSendMs = 0;   // 静止画面补 IDR 用
@@ -900,12 +871,12 @@ auto tick = [&]() {
             makePauseFrame();
             g_paused = true;
             out.send_lock();
-            Logf("锁屏：暂停推流（保持心跳）\\n");
+            Logf("锁屏：暂停推流（保持心跳）\n");
           } else {
             g_paused = false;
             needReinitAfterUnlock = true;
             out.send_unlock();
-            Logf("解锁：恢复推流\\n");
+            Logf("解锁：恢复推流\n");
           }
         }
         if (needReinitAfterUnlock && !nowLocked) {
@@ -924,22 +895,22 @@ auto tick = [&]() {
         uint64_t el = now - startMs;
         if (el > 4000 && !p1) {
           p1 = true; makePauseFrame(); g_paused = true; out.send_lock();
-          Logf("[diag] 强制暂停（等价锁屏）\\n");
+          Logf("[diag] 强制暂停（等价锁屏）\n");
         }
         if (el > 12000 && !p2) {
           p2 = true; g_paused = false;
           if (useDDA) { HRESULT hpg = initDDA(); (void)hpg; }
           first = true; haveFrame = false;
           out.send_unlock();
-          Logf("[diag] 强制恢复\\n");
+          Logf("[diag] 强制恢复\n");
         }
       }
       // 诊断：PJS_FAKE_LOCK=1 → 3 秒发 lk、8 秒发 ul，用来自测电视端遮罩（无需真的锁屏）
       if (getenv("PJS_FAKE_LOCK")) {
         static bool lkSent = false, ulSent = false;
         uint64_t el = now - startMs;
-        if (el > 3000 && !lkSent) { lkSent = true; out.send_lock(); Logf("[diag] 发送 lk\\n"); }
-        if (el > 8000 && !ulSent) { ulSent = true; out.send_unlock(); Logf("[diag] 发送 ul\\n"); }
+        if (el > 3000 && !lkSent) { lkSent = true; out.send_lock(); Logf("[diag] 发送 lk\n"); }
+        if (el > 8000 && !ulSent) { ulSent = true; out.send_unlock(); Logf("[diag] 发送 ul\n"); }
       }
       if (now - t0 > (g_slowlog ? 10000 : 1000)) {
         double sec = (now - t0) / 1000.0;
@@ -989,25 +960,31 @@ auto tick = [&]() {
       // 看门狗：编码器 3 秒一帧都没吐出来（async MFT 可能既不报错也不出帧，实测 Intel QSV）
       // → 依次切换输入方式，最后换成软件编码器，保证一定有画面。
       static int rescueStep = 0;
-      if (!g_noenc && total_au == 0 && rescueStep < 3 && now - lastRescueMs > 900) {
+      static uint64_t lastAcqSeen = 0;
+      // 中途停摆也要自救：旧条件只看 total_au==0（仅启动期），编码管线启动成功后卡死
+      // 就永远不重试 → 画面冻结而进程还活着，界面也看不出问题。
+      bool newFramesNow = totalAcq != lastAcqSeen;
+      bool stalled = (total_au == 0) || (newFramesNow && !g_paused && now - lastAuMs > 3000);
+      if (newFramesNow) lastAcqSeen = totalAcq;
+      if (!g_noenc && stalled && rescueStep < 3 && now - lastRescueMs > 900) {
         lastRescueMs = now;
         rescueStep++;
         if (rescueStep == 1 && mode != 2 && enc.d3d() && dev && enc.NextInputTex(dev.Get()) != nullptr) {
           mode = 2;
-          Logf("enc: 3 秒无输出，输入改走 GPU 纹理直入\\n");
+          Logf("enc: 3 秒无输出，输入改走 GPU 纹理直入\n");
         } else if (rescueStep == 2 && mode != 0) {
           mode = 0;
-          Logf("enc: 3 秒无输出，输入改走 CPU 转换\\n");
+          Logf("enc: 3 秒无输出，输入改走 CPU 转换\n");
         } else if (rescueStep == 3) {
-          Logf("enc: 3 秒仍无输出，改用软件编码器（CPU）\\n");
+          Logf("enc: 3 秒仍无输出，改用软件编码器（CPU）\n");
           enc.ReleaseForRetry();
           if (!enc.Create(ew, eh, cfg.fps, cfg.bitrate, false, nullptr, 0))
-            Logf("[错误] 软件编码器创建失败\\n");
+            Logf("[错误] 软件编码器创建失败\n");
           // 关键：软件编码器吃的是内存 NV12，但**转换仍交给 GPU**（mode 1）。
           // 之前退到 mode 0 让 CPU 做 1440p 的 BGRA→NV12（实测 10~14ms/帧），
           // 直接把这台机器压到 30fps；改成 GPU 转换后转换降到 ~2ms。
           mode = stageNV12 ? 1 : 0;
-          Logf("enc: 软件编码器就绪，转换走 %s\\n", mode == 1 ? "GPU" : "CPU");
+          Logf("enc: 软件编码器就绪，转换走 %s\n", mode == 1 ? "GPU" : "CPU");
         }
       }
       // 诊断：启动 5 秒后依然一帧都没编码出来 → 明确报错并给出上下文，避免"不报错但没画面"
@@ -1023,15 +1000,15 @@ auto tick = [&]() {
     // 采集线程优先级：4K 视频软解/浏览器解码线程会抢占时间片，导致桌面呈现停顿
     // 50~110ms（实测 4K60 全屏时 fps 掉到 50~57、个别秒 111ms；资源并未饱和，属调度问题）。
     bool noPrio = getenv("PJS_NOPRIO") != nullptr;   // 诊断：关掉优先级提升做对照
-    if (!noPrio) {
-      // UI「停止投屏」：命名事件触发优雅退出，程序才能发出 bye 包并清理。
-    // 直接 TerminateProcess 杀掉的话，接收端只能等空闲超时（实测要等很久）。
+    // 「停止投屏」监听必须无条件安装：旧版被误嵌进 if (!noPrio) 里，
+    // 一旦设了 PJS_NOPRIO 就再也收不到停止事件，只能强杀进程（接收端收不到 bye）。
     HANDLE stopEvt = CreateEventW(nullptr, TRUE, FALSE, L"Local\\XingLianCastStop");
     if (stopEvt) {
       ResetEvent(stopEvt);   // 作废上一次残留的信号
       std::thread([stopEvt] { WaitForSingleObject(stopEvt, INFINITE); g_stop = true; }).detach();
     }
-    SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+    if (!noPrio) {
+      SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
       SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
       // MMCSS（多媒体调度类）：比单纯提优先级更有效——系统会为采集线程预留带宽，
       // 浏览器解码/合成线程抢不走。任务名用 "Games"（低延迟档）。
@@ -1086,6 +1063,8 @@ auto tick = [&]() {
           // 静止画面的「心跳帧」：接收端在 hello/重配后要等一个 IDR 才出画，
           // 而桌面不动就永远没有新帧 → 电视一直黑屏，直到用户动鼠标（实测要等 10s+）。
           // 这里把上一帧的 NV12（还在 staging 纹理里）按 IDR 重编一次。
+          if (mode == 2) mode = 1;   // 纹理直入模式下拿不到可复用的干净帧：静止时降到 GPU 转换路径
+          if (mode == 2) mode = 1;   // 纹理直入模式拿不到可复用的干净帧：静止时降到 GPU 转换路径
           if (mode == 1 && haveFrame && stageClean && GetTickCount64() - lastSendMs > 500) {
             // 关键：每次补帧前把干净帧重新拷一遍。
             // stageClean 是持久纹理，如果直接往里叠光标，下一次补帧会在**已经叠过的画面**上再叠一次，
@@ -1130,7 +1109,7 @@ auto tick = [&]() {
               if (!dumped && (fp = fopen("cursor_dump.bin", "wb"))) {
                 fwrite(g_cur.shape.data(), 1, got, fp);
                 fclose(fp);
-                Logf("cursor dump: type=%u w=%u h=%u pitch=%u got=%u\\n", si.Type, si.Width, si.Height, si.Pitch, got);
+                Logf("cursor dump: type=%u w=%u h=%u pitch=%u got=%u\n", si.Type, si.Width, si.Height, si.Pitch, got);
                 dumped = true;
               }
             }
@@ -1204,6 +1183,12 @@ auto tick = [&]() {
     out.send_bye();                                 // 通知接收端立即断开并释放解码器
     Sleep(40);
     Logf("退出。共发 %llu 包\n", (unsigned long long)out.packets());
+    // ---- 统一收尾：旧版直接 return，WASAPI 线程 / 共享内存 / MF 都没释放 ----
+    try { apipe.Stop(); } catch (...) {}              // 音频线程必须在进程退出前 join
+    if (stopEvt) { CloseHandle(stopEvt); stopEvt = nullptr; }
+    if (ctl) { UnmapViewOfFile((LPCVOID)ctl); ctl = nullptr; }
+    if (ctlMap) { CloseHandle(ctlMap); ctlMap = nullptr; }
+    MFShutdown();
   } catch (winrt::hresult_error& e) {
     Logf("WinRT 异常 0x%08lx: %ls\n", (unsigned long)e.code(), e.message().c_str());
     logx::Shutdown();

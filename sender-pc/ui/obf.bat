@@ -26,7 +26,7 @@ goto :sign
 
 :sign
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$c=Get-Item 'Cert:\CurrentUser\My\C298644FCF4FDBE22B49BA99472A4E50AC217E27' -ErrorAction SilentlyContinue; if($c){ $s=Set-AuthenticodeSignature -FilePath 'XingLianCast.exe' -Certificate $c; Write-Host ('sign: '+$s.Status) } else { Write-Host 'sign: certificate not found' }"
+  "$c=Get-Item 'Cert:\CurrentUser\My\C298644FCF4FDBE22B49BA99472A4E50AC217E27' -ErrorAction SilentlyContinue; if(-not $c){ Write-Host 'sign: certificate not found (aborting)'; exit 1 }; $s=Set-AuthenticodeSignature -FilePath 'XingLianCast.exe' -Certificate $c; Write-Host ('sign: '+$s.Status); if($s.Status -ne 'Valid'){ exit 1 }"
 echo [OK] XingLianCast.exe ready
 goto :eof
 

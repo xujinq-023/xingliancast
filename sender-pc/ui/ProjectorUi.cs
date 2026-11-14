@@ -477,6 +477,8 @@ namespace ProjectorUi
         public static string Write(string name, string content)
         {
             string okPath = null;
+            // 写所有能写的位置做冗余（旧版第一个成功就 break，别处会留旧副本；
+            // 且只有注册表成功时返回 null → 误报"保存失败"）
             foreach (var d in DirCandidates())
             {
                 try
@@ -485,16 +487,19 @@ namespace ProjectorUi
                     string p = Path.Combine(d, name);
                     File.WriteAllText(p, content);
                     // 读回来确认真的写进去了（有些环境 WriteAllText 静默失败）
-                    if (File.Exists(p) && File.ReadAllText(p).Trim() == content.Trim()) { okPath = p; break; }
+                    if (File.Exists(p) && File.ReadAllText(p).Trim() == content.Trim())
+                        if (okPath == null) okPath = p;
                 }
                 catch { }
             }
+            bool regOk = false;
             try
             {
                 using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RegKey))
-                    if (k != null) k.SetValue(name, content);
+                    if (k != null) { k.SetValue(name, content); regOk = true; }
             }
             catch { }
+            if (okPath == null && regOk) okPath = @"HKCU\" + RegKey;   // 只有注册表成功也算成功
             return okPath;
         }
     }
@@ -1225,7 +1230,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.13  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.14  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2042,7 +2047,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.13  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.14  ·  build " + _stamp;
         }
 
         void LoadAutostartState()

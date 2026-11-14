@@ -52,7 +52,7 @@ final class Sps {
             if (!fmo) br.u(1);                              // mb_adaptive_frame_field_flag
             br.u(1);                                        // direct_8x8_inference_flag
             // CropUnitX/Y per H.264 table 7-11 (ChromaArrayType == chroma here)
-            int cropX = (chroma == 1) ? 1 : 2;
+            int cropX = (chroma == 0) ? 1 : ((chroma == 1) ? 2 : 2);   // H.264 7-3: 4:2:0 的 SubWidthC=2
             int cropY = ((chroma == 0) ? 1 : 2) * (fmo ? 1 : 2);
             if (br.u(1) != 0) {                             // frame_cropping_flag
                 int l = br.ue(), r = br.ue(), t = br.ue(), b = br.ue();

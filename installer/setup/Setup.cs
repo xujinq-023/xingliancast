@@ -52,7 +52,7 @@ static class App
     }
 
     public const string Name = "星联投屏";
-    public const string Version = "1.0.13";
+    public const string Version = "1.0.14";
     public const string Publisher = "星联投屏";
     public const string AppId = "XingLianCast";
 
@@ -313,15 +313,24 @@ static class App
             {
                 try
                 {
-                    using (var root = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
                     using (var tp = new X509Store(StoreName.TrustedPublisher, StoreLocation.LocalMachine))
                     {
-                        root.Open(OpenFlags.ReadWrite);
+                        // Root 只在交互安装时写：静默/批量部署往全机根存储塞自签名 CA，
+                        // 会永久削弱该机器的信任链（与本方法注释的意图相反）。
+                        if (interactive)
+                        {
+                            using (var root = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
+                            {
+                                root.Open(OpenFlags.ReadWrite);
+                                root.Add(cert);
+                            }
+                        }
                         tp.Open(OpenFlags.ReadWrite);
-                        root.Add(cert);
                         tp.Add(cert);
                     }
-                    return "证书已安装到本机受信任存储（对所有用户生效）";
+                    return interactive
+                        ? "证书已安装到本机受信任存储（对所有用户生效）"
+                        : "证书已安装到本机受信任发布者（静默模式不写根存储）";
                 }
                 catch { }
             }
@@ -792,6 +801,13 @@ class UninstallForm : Form
 
             TryDelete(App.StartMenuLnk);
             TryDelete(App.DesktopLnk);
+            // 开机自启快捷方式（autostart.ps1 创建）与授权/试用备份残留：旧版都漏了
+            try {
+                string startup = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Startup), App.Name + ".lnk");
+                TryDelete(startup);
+            } catch { }
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\XingLian\Projector", false); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + App.AppId, false); } catch { }
 
             // 保留 APK 和日志，便于重装后继续用

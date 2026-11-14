@@ -42,7 +42,10 @@ class Feedback {
     a.sin_addr.s_addr = INADDR_ANY;
     if (::bind(s_, (sockaddr*)&a, sizeof(a)) == SOCKET_ERROR) { closesocket(s_); s_ = INVALID_SOCKET; return false; }
     DWORD to = 200;
-    setsockopt(s_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof(to));
+    // 失败会导致 recvfrom 永久阻塞、Stop() 里的 join 死等，必须报错
+    if (setsockopt(s_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&to, sizeof(to)) == SOCKET_ERROR) {
+      closesocket(s_); s_ = INVALID_SOCKET; return false;
+    }
     run_ = true;
     thr_ = std::thread([this] { Loop(); });
     return true;
@@ -61,9 +64,10 @@ class Feedback {
   Snapshot Get() {
     std::lock_guard<std::mutex> lk(mu_);
     Snapshot s = snap_;
-    if (hasRx_ && std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::steady_clock::now() - lastRx_).count() > 3000)
-      s.alive = false;
+    long long since = hasRx_ ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - lastRx_).count() : -1;
+    if (since > 3000) { s.alive = false; s.busy = false; s.needIdr = false; }
+    if (since > 2000 || since < 0) s.rttMs = -1;   // 2 秒没有 pong：RTT 失效，别显示虚高值
     return s;
   }
 
@@ -104,6 +108,7 @@ class Feedback {
       }
       if (text.rfind("PJS/F1", 0) != 0) continue;
       std::lock_guard<std::mutex> lk(mu_);
+      snap_.busy = false;          // 收到常规回传 = 电视不再忙（旧版 busy 一旦置位永不复位）
       snap_.alive = true;
       lastRx_ = std::chrono::steady_clock::now();
       hasRx_ = true;

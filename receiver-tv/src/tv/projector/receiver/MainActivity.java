@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     // 电脑端主动点「停止投屏」会发 bye：这种情况文案是「电脑端已停止投屏」，
     // 与"掉线/被踢"的「连接已断开，等待重连…」要区分开。
     private boolean gracefulStop;
+    private long lastBusyBannerMs;
     // 提示条超时：只负责把提示条收起来，绝不能动画面（旧版用的是 bannerTimeout，
     // 那个 Runnable 会强制 showIdle()，导致「另一台电脑尝试投屏」提示 3 秒后画面被切回等待页）
     private final Runnable bannerHide = new Runnable() {
@@ -121,7 +122,13 @@ public class MainActivity extends Activity {
                 else if ("lk".equals(ev)) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("ul".equals(ev)) { locked = false; lastKey = null; }
                 else if ("sw".equals(ev)) showBanner("被投显示器已断开，已切换到主显示器");
-                else if ("b2".equals(ev)) showBanner("另一台电脑尝试投屏，已拒绝");
+                else if ("b2".equals(ev)) {
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - lastBusyBannerMs > 3000) {   // 每 3 秒最多一次，别盖住断线提示
+                        lastBusyBannerMs = nowMs;
+                        showBanner("另一台电脑尝试投屏，已拒绝");
+                    }
+                }
                 else if ("pz".equals(ev) && !locked) { locked = true; lastKey = null; renderLockPage(); }
                 else if ("rs".equals(ev) && locked) { locked = false; lastKey = null; }
             }
@@ -218,7 +225,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0.13");
+        ver.setText("星联投屏 TV  v1.0.14");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);
@@ -343,7 +350,11 @@ public class MainActivity extends Activity {
 
         // 断线判断看"是否投屏过"，而不是 peer 是否存在（bye 会把 peer 置为 "-"）
         String key = streaming ? "S" : error ? "E" : wasStreaming ? "D" : (peer != null ? "C" : "I");
-        if (key.equals(lastKey)) return;
+        if (key.equals(lastKey)) {
+            // 状态没变也要刷新右上角信息条，否则 fps/分辨率永远停在首帧的值
+            if (streaming) updateInfoBar(text);
+            return;
+        }
         lastKey = key;
 
         if (streaming) {

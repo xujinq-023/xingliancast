@@ -79,7 +79,9 @@ public final class RxEngine {
     private static final long RENDER_PACE_NS = 0L;
     /** 视频延迟(ms)对齐音频：TV 音频链路实测 ~150ms（AudioTrack 缓冲 + HAL 145ms），
      *  视频链路只有 ~75ms，音频明显偏晚 → 把视频也推迟同样的量。 */
-    private static final long AV_SYNC_MS = 0;   // 0 = 不做音画同步（用户优先保证画面流畅）
+    private static final long AV_SYNC_MS = 0;   // 0 = 不做整体延迟（改用它处"超前丢帧"策略）
+    private static final long AV_MAX_LEAD_US = 200_000;  // 音频最多允许超前视频 200ms
+    private volatile long lastVideoPtsUs;                 // 最近一帧视频的 PTS（µs，发送端时钟）
     private static final long PACE_LEAD_NS = 2_000_000L; // 首帧/重锚提前量
     private long nextRenderNs = 0;                       // pipe 线程/编解码回调线程使用
 
@@ -305,7 +307,12 @@ public final class RxEngine {
     }
 
     private void receiveLoop() {
-        if (!bind()) return;
+        // 旧版 bind 失败直接 return：接收线程退出且无人重试，界面停在错误态、只能重启 App
+        for (int attempt = 0; running && !bind(); attempt++) {
+            if (attempt >= 30) return;                      // 约 15 秒仍失败才放弃
+            try { Thread.sleep(500); } catch (InterruptedException ie) { return; }
+        }
+        if (!running) return;
         byte[] data = new byte[2048];
         DatagramPacket p = new DatagramPacket(data, data.length);
         while (running) {
@@ -327,7 +334,7 @@ public final class RxEngine {
             if (closedIp != null && srcIp.equals(closedIp) && nowW < closedUntil) continue;   // 已关闭会话的残留包：忽略
             String cur = peer;
             boolean hasSession = cur != null && !cur.equals("-") && !cur.equals("?");
-            long nowMs2 = System.currentTimeMillis();
+            long nowMs2 = SystemClock.elapsedRealtime();
             // 活跃 = 收包活跃 或 最近 3 秒真的解出过画面。
             // 只看收包会在「刚连上/短暂空档」时误判为空闲，让新机器抢占（实测会打断当前画面）。
             boolean hot = hasSession && ((lastRxWall > 0 && (nowW - lastRxWall) < BUSY_WINDOW_MS)
@@ -366,10 +373,10 @@ public final class RxEngine {
         if (plen > len - H) plen = len - H;
         if (plen <= 0) return;
         byte[] payload = Arrays.copyOfRange(d, off + H, off + H + plen);
-        if (type == T_VIDEO) stepVideo(seq, tslo, flags, kind, payload);
+        if (type == T_VIDEO) { if (kind != 0) return; stepVideo(seq, tslo, flags, kind, payload); }   // kind 0 = SLICE
         else if (type == T_META) stepMeta(seq, tslo, flags, payload);
         else if (type == T_CTRL) stepCtrl(payload, srcIp);
-        else stepAudio(seq, flags, payload);
+        else { if (kind != 1) return; stepAudio(seq, flags, payload, tslo); }                               // kind 1 = AAC
     }
 
     /** Control packet (CTRL): "bye" = sender stopped casting; drop the decoder right away so
@@ -551,7 +558,8 @@ public final class RxEngine {
     /** Audio packets carry exactly one ADTS frame (pjs-spec §3, codec=1): verify seq,
      *  then hand straight to the audio thread. AAC survives single-frame loss, so no
      *  waitingIdr-style resync gate is needed. rx thread only. */
-    private void stepAudio(long seq, int flags, byte[] payload) {
+    /** 音频包：带 PTS 交给音频线程，用于和视频对齐（超前就丢帧，避免长期累积口型错位）。 */
+    private void stepAudio(long seq, int flags, byte[] payload, long tslo) {
         if (payload.length < 8 || (payload[0] & 0xFF) != 0xFF || (payload[1] & 0xF0) != 0xF0) return;
         if (aLastSeq >= 0) {
             int delta = (int) (seq - aLastSeq);
@@ -577,7 +585,9 @@ public final class RxEngine {
             h.removeMessages(MSG_AUDIO);
             audioDrop.addAndGet(aPend.getAndSet(1));
         }
-        h.obtainMessage(MSG_AUDIO, payload).sendToTarget();
+        long pts = metaTsHi >= 0 ? ((((long) metaTsHi) << 32) | (tslo & 0xFFFFFFFFL)) : 0L;
+        AudPkt ap = new AudPkt(payload, pts);
+        h.obtainMessage(MSG_AUDIO, ap).sendToTarget();
     }
 
     /** ts_lo + latest meta ts_hi -> monotonic 64-bit timestamp (nearest-wrap rule). */
@@ -592,7 +602,10 @@ public final class RxEngine {
 
     // ---------------- pipeline thread ----------------
 
+    static final class AudPkt { final byte[] a; final long pts; AudPkt(byte[] a, long p) { this.a = a; this.pts = p; } }
+
     private void onFrame(byte[] au, long ts, boolean idr) {
+        lastVideoPtsUs = ts;
         noteCfg(au);                                       // in-band SPS/PPS (first frame too)
         // Defensive (old senders): config-only groups (SPS/PPS, no VCL NAL) never get
         // fed — low-latency HW decoders echo garbage frames for them. SPS/PPS arrive
@@ -630,8 +643,11 @@ public final class RxEngine {
                     fedIdr.incrementAndGet();
                 }
                 if (auQ.size() >= 60) {
-                    Log.w(TAG, "auQ overflow clear size=" + auQ.size() + " fed=" + framesFed.get());
-                    auQ.clear();                             // overflow safety valve
+                    // 丢最旧的，而不是整队清空：清空会断裂参考链、触发 MSG_ERR 重建解码器
+                    int dropped = 0;
+                    while (auQ.size() >= 45 && !auQ.isEmpty()) { auQ.pollFirst(); dropped++; }
+                    droppedAu.addAndGet(dropped);
+                    Log.w(TAG, "auQ overflow drop-oldest " + dropped + " fed=" + framesFed.get());
                 }
                 auQ.add(f);
                 pump();
@@ -660,9 +676,9 @@ public final class RxEngine {
                 lastHelloMs = nowMs;
                 // 关键：已有画面在正常解码时，绝不因为「别的电脑发来 hello」而重建解码器。
                 // 重建会让当前流丢到下一个 IDR（实测约 1 秒黑屏/冻结），表现为"第二台电脑连入时电视断开一秒"。
-                if (lastFrameWall > 0 && (System.currentTimeMillis() - lastFrameWall) < 2000 && !waitingIdr) {
+                if (lastFrameWall > 0 && (SystemClock.elapsedRealtime() - lastFrameWall) < 2000 && !waitingIdr) {
                     Log.i(TAG, "hello ignored: session is active");
-                    Logx.i("hello ignored (session active, frameWall ago=" + (System.currentTimeMillis() - lastFrameWall) + "ms)");
+                    Logx.i("hello ignored (session active, frameWall ago=" + (SystemClock.elapsedRealtime() - lastFrameWall) + "ms)");
                     break;
                 }
                 Logx.i("hello -> reset codec + wait IDR");
@@ -710,7 +726,8 @@ public final class RxEngine {
                 b.put(f.au);
                 c.queueInputBuffer(idx, 0, f.au.length, f.ts, 0);
                 framesFed.incrementAndGet();
-            lastFrameWall = System.currentTimeMillis();
+                // 注：lastFrameWall 在输出回调（真正上屏）里更新，这里不再刷新，
+                // 否则解码器"吞输入不出帧"时活跃判定仍然成立（M4 的第二半）。
             } catch (Throwable e) {
                 Log.w(TAG, "feed failed len=" + f.au.length, e);
                 pipe.sendEmptyMessage(MSG_ERR);
@@ -832,7 +849,13 @@ public final class RxEngine {
     private void onAud(Message m) {
         if (m.what != MSG_AUDIO) return;
         aPend.decrementAndGet();
-        byte[] adts = (byte[]) m.obj;
+        AudPkt ap = (AudPkt) m.obj;
+        byte[] adts = ap.a;
+        long vPts = lastVideoPtsUs;
+        if (vPts > 0 && ap.pts > 0 && ap.pts - vPts > AV_MAX_LEAD_US) {   // 音频超前太多：丢掉这帧
+            audioDrop.incrementAndGet();
+            return;
+        }
         int fi = (adts[2] >> 2) & 0xF;                         // sampling_freq_index
         int ch = ((adts[2] & 1) << 2) | ((adts[3] >> 6) & 3);  // channel_configuration
         int rate = fi < 13 ? ADTS_RATES[fi] : 44100;
@@ -955,7 +978,7 @@ public final class RxEngine {
 
     /** 兜底：心跳还在但 3 秒没有画面（PC 锁屏/捕获暂停/编码卡住）→ 让电视显示暂停遮罩。 */
     private void checkPauseFallback() {
-        long now = System.currentTimeMillis();
+        long now = SystemClock.elapsedRealtime();          // 必须与 lastRxWall/lastFrameWall 同一时钟
         boolean alive = lastRxWall > 0 && (now - lastRxWall) < 3000;
         boolean stalled = alive && framesFed.get() > 0 && lastFrameWall > 0 && (now - lastFrameWall) > 3000;
         if (stalled && !pauseShown) {

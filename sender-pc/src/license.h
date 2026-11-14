@@ -274,7 +274,7 @@ inline bool verify(const std::string& codeIn, std::string& why, bool& permanent)
     ULARGE_INTEGER u{}; u.LowPart = ft.dwLowDateTime; u.HighPart = ft.dwHighDateTime;
     ULONGLONG nowDays = (u.QuadPart - 116444736000000000ULL) / 864000000000ULL;   // 自 1970-01-01
     ULONGLONG epochDays = 20454ULL;                                               // 2026-01-01
-    if (nowDays > epochDays + days) { why = "expired"; return false; }
+    if (nowDays >= epochDays + days) { why = "expired"; return false; }   // 恰好 N 天，不多给一天
   } else permanent = true;
 
   if ((payload[11] & 1) == 0) { why = "no-feature"; return false; }
@@ -318,19 +318,59 @@ inline std::string today_str() {
   return b;
 }
 
+// 取所有位置（含注册表）里某个整数记录的最大值：用于"历史最大用量"，防止删文件清零
+inline int store_read_max_int(const std::string& name) {
+  std::wstring wn = u8w(name);
+  int best = -1;
+  for (auto& d : store_dirs()) {
+    CreateDirectoryW(d.c_str(), nullptr);
+    std::string s;
+    if (!read_file_w(d + L"\\" + wn, s)) continue;
+    int v = atoi(s.c_str());
+    if (v > best) best = v;
+  }
+  wchar_t v2[64] = {};
+  DWORD cb = sizeof v2, type = 0;
+  if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\XingLian\\Projector", wn.c_str(),
+                   RRF_RT_REG_SZ, &type, v2, &cb) == ERROR_SUCCESS) {
+    int v = _wtoi(v2);
+    if (v > best) best = v;
+  }
+  return best;
+}
+
+// 试用额度（H6 加固）：
+//  - 记录"历史单日最大用量"：删掉今天的记录文件也不能清零
+//  - 记录"最近一次见到的日期"：系统时间被往回拨时不重置额度
 inline int trial_used() {
   std::string s = store_read_all_best("engine_trial.dat", true);
+  int maxEver = store_read_max_int("engine_trial_max.dat");
+  if (maxEver >= kTrialSecondsPerDay) return kTrialSecondsPerDay;   // 曾经用满过 → 直接拦
+  std::string last = store_read("engine_trial_last.dat");
+  std::string today = today_str();
+  if (!last.empty() && last > today) return kTrialSecondsPerDay;     // 时钟回拨：按用满处理
   if (s.empty()) return 0;
   size_t bar = s.find('|');
   if (bar == std::string::npos) return 0;
-  if (s.substr(0, bar) != today_str()) return 0;
-  return atoi(s.c_str() + bar + 1);
+  if (s.substr(0, bar) != today) return 0;
+  int used = atoi(s.c_str() + bar + 1);
+  return used > maxEver ? used : maxEver;
 }
 
 inline void trial_set(int used) {
+  std::string today = today_str();
   char b[64];
-  snprintf(b, sizeof b, "%s|%d", today_str().c_str(), used);
+  snprintf(b, sizeof b, "%s|%d", today.c_str(), used);
   store_write("engine_trial.dat", b);
+  int maxEver = store_read_max_int("engine_trial_max.dat");
+  if (used > maxEver) {
+    char m[32];
+    snprintf(m, sizeof m, "%d", used);
+    store_write("engine_trial_max.dat", m);
+  }
+  // 只在日期前进时更新（回拨不改，保住"见过的最晚日期"）
+  std::string last = store_read("engine_trial_last.dat");
+  if (last.empty() || today > last) store_write("engine_trial_last.dat", today);
 }
 
 // 返回：0 = 允许；1 = 未授权且试用已用完

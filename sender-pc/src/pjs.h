@@ -1,5 +1,6 @@
 // PJS 媒体层 (protocol/pjs-spec.md §3) — 16B 头, 大端
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -124,7 +125,7 @@ class UdpOut {
   // meta: [ts_hi u16][SPS+PPS Annex-B]，用于 ts 高位恢复与解码器重配
   void send_meta(const std::vector<uint8_t>& cfg, uint64_t ts_us) {
     if (cfg.empty()) return;
-    std::vector<uint8_t> pl(2 + cfg.size()); put16(pl.data(), (uint16_t)(ts_us >> 16));
+    std::vector<uint8_t> pl(2 + cfg.size()); put16(pl.data(), (uint16_t)(ts_us >> 32));   // 高 16 位：接收端 <<32 恢复
     memcpy(pl.data() + 2, cfg.data(), cfg.size());
     for (size_t off = 0; off < pl.size(); ) {
       size_t chunk = pl.size() - off > MAX_PAYLOAD ? MAX_PAYLOAD : pl.size() - off;
@@ -135,6 +136,7 @@ class UdpOut {
   }
   // 音频: 一包一 ADTS AAC 帧 (spec §3: type=AUDIO codec=1)。仅音频线程调用。
   void send_audio(const uint8_t* f, size_t n, uint64_t ts_us) {
+    if (n == 0 || n > MAX_PAYLOAD) return;            // 超限帧直接丢弃，不发半截（接收端会当正常帧播放）
     auto pkt = packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, SLICE, f, n);
     abytes_ += pkt.size();
     send_raw(pkt);
@@ -188,10 +190,11 @@ class UdpOut {
   void send_lock()   { send_ctrl2('l', 'k'); }
   void send_unlock() { send_ctrl2('u', 'l'); }
   void send_switched() { send_ctrl2('s', 'w'); }
-  uint64_t packets() const { return vseq_ + mseq_ + aseq_; }
-  uint32_t audio_packets() const { return aseq_; }
+  uint64_t packets() const { return (uint64_t)vseq_.load() + mseq_.load() + aseq_.load(); }
+  uint32_t audio_packets() const { return aseq_.load(); }
  private:
-  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{}; uint32_t vseq_ = 0, mseq_ = 0, aseq_ = 0, cseq_ = 0;
-  uint64_t sendErrs_ = 0, bytes_ = 0, abytes_ = 0;
+  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{};
+  std::atomic<uint32_t> vseq_{0}, mseq_{0}, aseq_{0}, cseq_{0};   // 采集线程与音频线程并发自增
+  std::atomic<uint64_t> sendErrs_{0}, bytes_{0}, abytes_{0};
 };
 } // namespace pjs

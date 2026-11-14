@@ -23,7 +23,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|navigation|uiMode"
+            android:configChanges="density|orientation|screenSize|screenLayout|keyboardHidden|navigation|uiMode"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -70,7 +70,7 @@ del /f /q "%VBS%" >nul 2>&1
 
 echo  [5/5] registering uninstall entry...
 reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayName /t REG_SZ /d "XingLianCast" /f >nul 2>&1
-reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayVersion /t REG_SZ /d "1.0.3" /f >nul 2>&1
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayVersion /t REG_SZ /d "1.0.14" /f >nul 2>&1
 reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v Publisher /t REG_SZ /d "XingLianCast" /f >nul 2>&1
 reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v InstallLocation /t REG_SZ /d "%DST%" /f >nul 2>&1
 reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayIcon /t REG_SZ /d "%DST%\XingLianCast.exe" /f >nul 2>&1
