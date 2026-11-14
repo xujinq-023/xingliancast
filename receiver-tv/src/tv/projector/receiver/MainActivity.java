@@ -197,7 +197,7 @@ public class MainActivity extends Activity {
         col.addView(keys, keysLp);
 
         TextView ver = new TextView(this);
-        ver.setText("星联投屏 TV  v1.0.1");
+        ver.setText("星联投屏 TV  v1.0.4");
         ver.setTextColor(0xFF4E4A70);
         ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         FrameLayout.LayoutParams verLp = new FrameLayout.LayoutParams(-2, -2);
