@@ -1029,3 +1029,16 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - `XingLianCast-Setup.exe`
 
 **重新打包**：`installer\dist\XingLianCast-Setup.exe`、`XingLianCast-Portable-1.0.0.zip`、`xinglian-codesign.cer`（新证书）
+### 67) 安装程序自动导入代码签名证书（2026-11-14 15:05）
+**目的**：客户双击安装包不再看到「未知发布者」。
+**实现**（`installer\setup\Setup.cs` → `App.InstallCertificate(cer, interactive)`）
+- 已提权：装到 `LocalMachine\Root` + `LocalMachine\TrustedPublisher`（对所有用户生效，静默）
+- 未提权：装到 `CurrentUser\TrustedPublisher`（静默）；`interactive=true` 时再尝试 `CurrentUser\Root`
+  （静默安装传 `interactive=false`，避免弹 Windows 证书确认框阻塞）
+- 失败不中断安装：结果写入安装日志，并在结语页以警告形式提示
+- 静默安装 `/silent` 也会装证书，日志中记录 `cert: ...`
+
+**实测**
+- `/silent /dir=...` 解包与安装流程正常，日志含 `extract OK` / `cert: ...`
+- 本沙盒环境拒绝子进程写证书存储（日志显示失败），故自动安装需在真实机器验证；
+  已提供手动导入步骤写入 `安装说明.txt` 第五节

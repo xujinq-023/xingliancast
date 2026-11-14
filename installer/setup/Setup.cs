@@ -8,6 +8,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Security.Cryptography.X509Certificates;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -103,6 +104,7 @@ static class App
                 dir = realDir;
                 App.ExtractPayload(dir);
                 log.AppendLine("extract OK -> " + dir);
+                log.AppendLine("cert: " + App.InstallCertificate(Path.Combine(dir, "xinglian-codesign.cer"), false));
             }
             catch (Exception ex)
             {
@@ -180,6 +182,71 @@ static class App
         }
     }
 
+    /// <summary>
+    /// 安装自签名代码签名证书，避免用户看到"未知发布者"。
+    /// 优先装到「本机」(需管理员，静默)；无权限时退回「当前用户」。
+    /// 返回一行结果说明，失败不影响安装。
+    /// </summary>
+    public static string InstallCertificate(string cerPath) { return InstallCertificate(cerPath, true); }
+
+    /// <summary>interactive=false 时不往 Root 写（避免弹 Windows 确认框阻塞静默安装）。</summary>
+    public static string InstallCertificate(string cerPath, bool interactive)
+    {
+        try
+        {
+            if (!File.Exists(cerPath)) return "未找到证书文件：" + cerPath;
+            var cert = new X509Certificate2(cerPath);
+
+            // 1) 本机存储（管理员）
+            if (IsElevated)
+            {
+                try
+                {
+                    using (var root = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
+                    using (var tp = new X509Store(StoreName.TrustedPublisher, StoreLocation.LocalMachine))
+                    {
+                        root.Open(OpenFlags.ReadWrite);
+                        tp.Open(OpenFlags.ReadWrite);
+                        root.Add(cert);
+                        tp.Add(cert);
+                    }
+                    return "证书已安装到本机受信任存储（对所有用户生效）";
+                }
+                catch { }
+            }
+
+            // 2) 当前用户存储（无需管理员；Root 可能弹一次确认）
+            int ok = 0;
+            try
+            {
+                using (var tp = new X509Store(StoreName.TrustedPublisher, StoreLocation.CurrentUser))
+                {
+                    tp.Open(OpenFlags.ReadWrite);
+                    tp.Add(cert);
+                    ok++;
+                }
+            }
+            catch { }
+            if (interactive)
+            {
+                try
+                {
+                    using (var root = new X509Store(StoreName.Root, StoreLocation.CurrentUser))
+                    {
+                        root.Open(OpenFlags.ReadWrite);
+                        root.Add(cert);
+                        ok++;
+                    }
+                }
+                catch { }
+            }
+            return ok > 0 ? "证书已安装到当前用户存储（仅本账户生效）" : "证书安装失败（可手动双击 .cer 导入）";
+        }
+        catch (Exception ex)
+        {
+            return "证书安装失败：" + ex.Message;
+        }
+    }
     public static string StartMenuLnkPath { get { return StartMenuLnk; } }
 
     public static void CreateShortcut(string lnkPath, string target, string workDir, string icon)
@@ -440,6 +507,9 @@ class InstallForm : Form
                     BeginInvoke((Action)delegate { _status.Text = "默认位置不可写，改用：" + realDir; });
                 dir = realDir;
                 App.ExtractPayload(dir);
+                BeginInvoke((Action)delegate { _bar.Value = 62; _status.Text = "正在安装代码签名证书…"; });
+                string certMsg = App.InstallCertificate(Path.Combine(dir, "xinglian-codesign.cer"));
+                if (certMsg.StartsWith("证书安装失败")) _warn.Add(certMsg);
                 BeginInvoke((Action)delegate { _bar.Value = 70; _status.Text = "正在创建快捷方式…"; });
                 string exe = Path.Combine(dir, "ProjectorUi.exe");
                 try { App.CreateShortcut(App.StartMenuLnk, exe, dir, Path.Combine(dir, "logo.ico")); }
