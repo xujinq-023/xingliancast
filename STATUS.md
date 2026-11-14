@@ -1133,3 +1133,15 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 1. `OnPaint` 开头先用 `BackColor` 填满 `ClientRectangle`（透明时取父窗体底色）
 2. 构造函数把 `BackColor` 设为 `T.Bg`，与窗体一致
 **实测**：卸载窗口、安装窗口的按钮均恢复正常圆角填充，无黑框。
+### 74) 异地备份：GitHub 私有仓库（2026-11-14 15:58）
+- 仓库：**https://github.com/xujinq-023/XingLianCast**（Private）
+- 认证：SSH ed25519（`~/.ssh/id_ed25519_xingliancast`，已写 `~/.ssh/config` 的 github.com 别名）
+- 分支：`master` → **`main`**（与 GitHub 默认一致），已 `push -u origin main`
+- 结果：远端 29 个提交、`refs/heads/main = 3cb700a`、pack 4.17 MiB、本地 `## main...origin/main` 干净
+- 安全校验：远端**不含** `license-private.txt` / `*.pfx` / `*.exe` / `*.apk` / `*.zip`
+- 清理：移出 19 个测试临时文件（probe 输出、keygen 草稿、截图），并补 ignore 规则
+
+**私钥离线备份**
+- `D:\Share\XingLianCast-signing-backup-20261114.7z`（12 KB，AES-256 + 文件名加密，密码 `XingLian!2026`）
+- 内含 `license-private.txt`、`xinglian-codesign.pfx/.cer`、`MakeLicense*.exe`
+- 需拷到 U 盘/加密网盘离线保存
