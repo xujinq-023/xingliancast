@@ -1145,3 +1145,29 @@ ProjectorUi.exe --diag                  查看机器码/授权状态/试用剩�
 - `D:\Share\XingLianCast-signing-backup-20261114.7z`（12 KB，AES-256 + 文件名加密，密码 `XingLian!2026`）
 - 内含 `license-private.txt`、`xinglian-codesign.pfx/.cer`、`MakeLicense*.exe`
 - 需拷到 U 盘/加密网盘离线保存
+### 75) 清理、改名收尾、文档与备份（2026-11-14 16:15）
+**3. 清理 `sender-pc\build\`**
+- 删除 324 个测试文件（201 png / 109 log / 7 个 sender_old* 副本 / html / map / txt），释放 44.1 MB
+- 保留：CMake 构建文件、`XingLianCastSender.exe`、fdk-aac 构建产物
+
+**4. 可执行文件改名**
+| 旧 | 新 |
+|---|---|
+| `ProjectorUi.exe` | **`XingLianCast.exe`** |
+| `sender.exe` | **`XingLianCastSender.exe`** |
+| `Local\ProjectorSenderCtl/Stop` | `Local\XingLianCastCtl/Stop` |
+| `Projector Sender.lnk` | `XingLianCast.lnk` |
+| `sender.log` | `XingLianCast.log` |
+
+- CMake 用 `OUTPUT_NAME` 改名；**改生成器后必须清空 build 重新 configure**（踩过：残留 NMake Makefile 仍产出旧名）
+- UI/安装程序/自启脚本/卸载列表/遗留 bat 全部同步
+- 实测：安装 → 启动 `XingLianCast.exe` → 点开始投屏 → 成功拉起 `XingLianCastSender.exe`，60fps 正常推流
+
+**文档**
+- `README.md`（GitHub 首页）
+- `docs/用户手册.md`、`docs/发码手册.md`、`docs/开发指南.md`、`docs/备份说明.md`
+
+**备份**
+- GitHub：`https://github.com/xujinq-023/XingLianCast`（32 提交，`main` 与远端同步）
+- NAS：`\\10.5.9.6\Images and Software\XingLianCast\2026-11-14\`（source 20.2 MB + dist 5.4 MB + build 2.6 MB + 加密私钥）
+- 离线：`D:\Share\XingLianCast-signing-backup-20261114.7z`
