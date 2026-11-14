@@ -1,6 +1,6 @@
-# Run ASan sender.exe for 240s; report ASan errors or survival.
+# Run ASan XingLianCastSender.exe for 240s; report ASan errors or survival.
 $ErrorActionPreference = 'Continue'
-$exe = 'D:\DSH-Workplace\XingLianCast\sender-pc\build-asan\sender.exe'
+$exe = 'D:\DSH-Workplace\XingLianCast\sender-pc\build-asan\XingLianCastSender.exe'
 $log = "$env:TEMP\pjs_asan_out.txt"
 Remove-Item $log -ErrorAction SilentlyContinue
 $vcvars = 'D:\Dev\VS2022BuildTools\VC\Auxiliary\Build\vcvars64.bat'

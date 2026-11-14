@@ -11,4 +11,4 @@ $ok = $LASTEXITCODE -eq 0
 if ($ok) { nmake; $ok = $LASTEXITCODE -eq 0 }
 Pop-Location
 if (-not $ok) { exit 1 }
-Write-Output "OK => $build\sender.exe"
+Write-Output "OK => $build\XingLianCastSender.exe"

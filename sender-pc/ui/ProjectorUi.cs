@@ -1,7 +1,7 @@
 // Projector sender UI (WinForms, custom-drawn dark theme).
 // Layout: header (logo/title/version + settings/min/close) -> main card (settings + start/stop)
 //         -> status bar (connection + live stats) -> footer (host/ip/network) -> optional log drawer.
-// Wraps sender.exe: builds the command line, starts/stops the engine, shows its status.
+// Wraps XingLianCastSender.exe: builds the command line, starts/stops the engine, shows its status.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -30,9 +30,9 @@ namespace ProjectorUi
         static void Main(string[] args)
         {
             // 诊断/支持用：不走界面，把结果写到文件，便于远程排查
-            //   ProjectorUi.exe --diag        机器码 / 授权状态 / 剩余试用
-            //   ProjectorUi.exe --diag <code> 校验指定激活码
-            // 命令行注册：ProjectorUi.exe --register "<激活码>"（支持远程指导用户自助注册）
+            //   XingLianCast.exe --diag        机器码 / 授权状态 / 剩余试用
+            //   XingLianCast.exe --diag <code> 校验指定激活码
+            // 命令行注册：XingLianCast.exe --register "<激活码>"（支持远程指导用户自助注册）
             if (args != null && args.Length >= 2 && args[0].Equals("--register", StringComparison.OrdinalIgnoreCase))
             {
                 string r = License.Register(args[1]);
@@ -1232,7 +1232,7 @@ class LogoBox : Panel
             ver.Size = T.Sz(320, 20);
 
             var body = new Label2();
-            body.Text = "引擎  sender.exe\n" +
+            body.Text = "引擎  XingLianCastSender.exe\n" +
                         "传输  UDP 45690（视频/音频）\n" +
                         "发现  UDP 45691 · 回传 45692\n" +
                         "字体  Noto Sans SC 子集（SIL OFL 1.1，全文见 OFL.txt）";
@@ -1410,7 +1410,7 @@ class LogoBox : Panel
         public MainForm()
         {
             _baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-            _exePath = Path.Combine(_baseDir, "sender.exe");
+            _exePath = Path.Combine(_baseDir, "XingLianCastSender.exe");
 
             string stamp;
             try { stamp = File.GetLastWriteTime(Application.ExecutablePath).ToString("MM-dd HH:mm"); }
@@ -2051,7 +2051,7 @@ class LogoBox : Panel
             {
                 if (_miAutostart == null) return;
                 string startup = Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-                _miAutostart.Checked = File.Exists(Path.Combine(startup, "Projector Sender.lnk"));
+                _miAutostart.Checked = File.Exists(Path.Combine(startup, "XingLianCast.lnk"));
                 UpdateAutostartText();
             }
             catch { }
@@ -2266,7 +2266,7 @@ class LogoBox : Panel
         {
             try
             {
-                using (var mm = MemoryMappedFile.OpenExisting(@"Local\ProjectorSenderCtl"))
+                using (var mm = MemoryMappedFile.OpenExisting(@"Local\XingLianCastCtl"))
                 using (var acc = mm.CreateViewAccessor())
                     acc.Write(0, _audioOn ? 1 : 0);
                 Log("[UI] 传声音 -> " + (_audioOn ? "开" : "关"));
@@ -2281,9 +2281,9 @@ class LogoBox : Panel
             string lad = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var cands = new List<string>
             {
-                Path.Combine(_baseDir, @"logs\sender.log"),
-                Path.Combine(lad, @"Projector\logs\sender.log"),
-                Path.Combine(Path.GetTempPath(), @"Projector\logs\sender.log")
+                Path.Combine(_baseDir, @"logs\XingLianCast.log"),
+                Path.Combine(lad, @"星联投屏\logs\XingLianCast.log"),
+                Path.Combine(Path.GetTempPath(), @"星联投屏\logs\XingLianCast.log")
             };
             foreach (var p in cands)
             {
@@ -2302,13 +2302,13 @@ class LogoBox : Panel
         {
             try { return Path.GetDirectoryName(EngineLogPath()); } catch { }
             string lad = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string legacy = Path.Combine(lad, @"Projector\logs");   // sender.exe 的默认写入位置
+            string legacy = Path.Combine(lad, @"Projector\logs");   // XingLianCastSender.exe 的默认写入位置
             string local = Path.Combine(lad, @"星联投屏\logs");
             string side = Path.Combine(_baseDir, "logs");
-            // 1) 哪里已经有 sender.log 就用哪里（最可靠）
+            // 1) 哪里已经有 XingLianCast.log 就用哪里（最可靠）
             foreach (var d in new[] { legacy, side, local })
             {
-                try { if (File.Exists(Path.Combine(d, "sender.log"))) return d; } catch { }
+                try { if (File.Exists(Path.Combine(d, "XingLianCast.log"))) return d; } catch { }
             }
             // 2) 还没有日志：回到 sender 的默认路径（能写就用它，保证菜单打开的就是以后的日志目录）
             try
@@ -2476,8 +2476,8 @@ class LogoBox : Panel
             if (userInitiated) { _wantCast = true; _retryDelay = 2000; }
             if (!File.Exists(_exePath))
             {
-                Log("找不到 sender.exe: " + _exePath);
-                MessageBox.Show(this, "找不到 sender.exe：\n" + _exePath + "\n\n请重新安装，或把界面的可执行文件放回安装目录。",
+                Log("找不到 XingLianCastSender.exe: " + _exePath);
+                MessageBox.Show(this, "找不到 XingLianCastSender.exe：\n" + _exePath + "\n\n请重新安装，或把界面的可执行文件放回安装目录。",
                     "星联投屏", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
@@ -2493,7 +2493,7 @@ class LogoBox : Panel
                 return;
             }
             string args = BuildArgs();
-            Log("> sender.exe " + args);
+            Log("> XingLianCastSender.exe " + args);
             try
             {
                 var psi = new ProcessStartInfo(_exePath, args);
@@ -2553,7 +2553,7 @@ class LogoBox : Panel
         {
             if (_proc != null && !_proc.HasExited)
             {
-                IntPtr ev = OpenEventW(EVENT_MODIFY_STATE, false, @"Local\ProjectorSenderStop");
+                IntPtr ev = OpenEventW(EVENT_MODIFY_STATE, false, @"Local\XingLianCastStop");
                 if (ev != IntPtr.Zero) { SetEvent(ev); CloseHandle(ev); }
                 if (!_proc.WaitForExit(1500)) { try { _proc.Kill(); } catch { } }
             }

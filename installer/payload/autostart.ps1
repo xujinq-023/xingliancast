@@ -6,7 +6,7 @@ param([Parameter(Mandatory = $true)][ValidateSet('enable', 'disable', 'status')]
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $vbs  = Join-Path $here 'start_hidden.vbs'
-$lnk  = Join-Path ([Environment]::GetFolderPath('Startup')) 'Projector Sender.lnk'
+$lnk  = Join-Path ([Environment]::GetFolderPath('Startup')) 'XingLianCast.lnk'
 $ws   = New-Object -ComObject WScript.Shell
 
 switch ($Action) {

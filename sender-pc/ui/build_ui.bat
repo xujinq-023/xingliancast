@@ -1,6 +1,6 @@
 @echo off
 rem Build the projector sender UI (WinForms, .NET Framework 4.x).
-rem Output: sender-pc\ui\ProjectorUi.exe  (copy next to sender.exe to run)
+rem Output: sender-pc\ui\XingLianCast.exe  (copy next to XingLianCastSender.exe to run)
 setlocal
 set CSC=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=%WINDIR%\Microsoft.NET\Framework\v4.0.30319\csc.exe
@@ -9,7 +9,7 @@ if not exist "%CSC%" (
   exit /b 1
 )
 cd /d "%~dp0"
-"%CSC%" /nologo /target:winexe /optimize+ /out:ProjectorUi.exe ^
+"%CSC%" /nologo /target:winexe /optimize+ /out:XingLianCast.exe ^
   /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll ^
   /resource:logo.png,logo.png ^
   /resource:fonts\XLUI.ttf,XLUI.ttf ^
@@ -17,4 +17,4 @@ cd /d "%~dp0"
   ProjectorUi.cs
 if errorlevel 1 exit /b 1
 copy /y fonts\OFL.txt OFL.txt >nul
-echo BUILD OK: %~dp0ProjectorUi.exe
+echo BUILD OK: %~dp0XingLianCast.exe

@@ -6,5 +6,5 @@
     <protection id="constants" />
     <protection id="ref proxy" />
   </rule>
-  <module path="ProjectorUi.exe" />
+  <module path="XingLianCast.exe" />
 </project>

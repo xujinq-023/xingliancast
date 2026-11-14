@@ -1,6 +1,6 @@
-' Projector sender launcher (logon autostart): starts sender.exe with no console window.
+' Projector sender launcher (logon autostart): starts XingLianCastSender.exe with no console window.
 ' No shell redirection: cmd /c with a quoted ">> path" breaks under WScript.Shell.Run,
-' and sender.exe will write its own log file (see --log option / file logger).
+' and XingLianCastSender.exe will write its own log file (see --log option / file logger).
 ' ASCII only (Windows Script Host reads BOM-less files as ANSI).
 Option Explicit
 
@@ -9,8 +9,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh  = CreateObject("WScript.Shell")
 
 base    = fso.GetParentFolderName(WScript.ScriptFullName)
-exePath = base & "\sender.exe"
-If Not fso.FileExists(exePath) Then exePath = base & "\build\sender.exe"   ' dev layout: exe is in build\
+exePath = base & "\XingLianCastSender.exe"
+If Not fso.FileExists(exePath) Then exePath = base & "\build\XingLianCastSender.exe"   ' dev layout: exe is in build\
 
 ' ---- args from autostart.cfg (line: ARGS=--height 1440 --display 0) ----
 args = "--height 1440"
@@ -25,7 +25,7 @@ If fso.FileExists(cfg) Then
 End If
 
 If Not fso.FileExists(exePath) Then
-  MsgBox "sender.exe not found: " & exePath, 48, "Projector"
+  MsgBox "XingLianCastSender.exe not found: " & exePath, 48, "Projector"
   WScript.Quit 1
 End If
 

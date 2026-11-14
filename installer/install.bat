@@ -18,8 +18,8 @@ if not exist "%DEST%" (
   exit /b 1
 )
 
-copy /y "%SRC%\sender.exe"        "%DEST%\" >nul || goto :copyfail
-copy /y "%SRC%\ProjectorUi.exe"   "%DEST%\" >nul || goto :copyfail
+copy /y "%SRC%\XingLianCastSender.exe"        "%DEST%\" >nul || goto :copyfail
+copy /y "%SRC%\XingLianCast.exe"   "%DEST%\" >nul || goto :copyfail
 copy /y "%SRC%\receiver-tv.apk"   "%DEST%\" >nul 2>&1
 copy /y "%SRC%\autostart.ps1"     "%DEST%\" >nul
 copy /y "%SRC%\start_hidden.vbs"  "%DEST%\" >nul
@@ -34,7 +34,7 @@ pause
 exit /b 1
 
 :shortcuts
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; $t='%DEST%\ProjectorUi.exe'; $d=@((Join-Path ([Environment]::GetFolderPath('Programs')) 'Projector Sender.lnk'),(Join-Path ([Environment]::GetFolderPath('Desktop')) 'Projector Sender.lnk')); foreach($l in $d){ $s=$ws.CreateShortcut($l); $s.TargetPath=$t; $s.WorkingDirectory='%DEST%'; $s.IconLocation=$t+',0'; $s.Save() }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; $t='%DEST%\XingLianCast.exe'; $d=@((Join-Path ([Environment]::GetFolderPath('Programs')) 'XingLianCast.lnk'),(Join-Path ([Environment]::GetFolderPath('Desktop')) 'XingLianCast.lnk')); foreach($l in $d){ $s=$ws.CreateShortcut($l); $s.TargetPath=$t; $s.WorkingDirectory='%DEST%'; $s.IconLocation=$t+',0'; $s.Save() }"
 echo [2/4] shortcuts created
 
 netsh advfirewall firewall show rule name="Projector Discovery" >nul 2>&1
@@ -47,24 +47,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -Verb RunA
 )
 if errorlevel 0 echo [3/4] firewall rule checked
 
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v DisplayName /t REG_SZ /d "Projector Sender" /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v DisplayVersion /t REG_SZ /d "0.1" /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v Publisher /t REG_SZ /d "Projector" /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v InstallLocation /t REG_SZ /d "%DEST%" /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v UninstallString /t REG_SZ /d "\"%DEST%\uninstall.bat\"" /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v NoModify /t REG_DWORD /d 1 /f >nul
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\ProjectorSender" /v NoRepair /t REG_DWORD /d 1 /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayName /t REG_SZ /d "星联投屏" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v DisplayVersion /t REG_SZ /d "0.1" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v Publisher /t REG_SZ /d "XingLianCast" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v InstallLocation /t REG_SZ /d "%DEST%" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v UninstallString /t REG_SZ /d "\"%DEST%\uninstall.bat\"" /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v NoModify /t REG_DWORD /d 1 /f >nul
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\XingLianCast" /v NoRepair /t REG_DWORD /d 1 /f >nul
 echo [4/4] uninstall entry registered
 
 echo.
-echo Done. Start menu / Desktop: "Projector Sender"
+echo Done. Start menu / Desktop: "星联投屏"
 echo   - Autostart: tick the checkbox in the UI (off by default)
 echo   - TV side: install receiver-tv.apk on the TV (adb install)
 echo   - Logs: %LOCALAPPDATA%\Projector\logs\sender.log
 echo.
-choice /c YN /n /m "Launch Projector Sender now? [Y/N] "
+choice /c YN /n /m "Launch 星联投屏 now? [Y/N] "
 if errorlevel 2 goto :done
-start "" "%DEST%\ProjectorUi.exe"
+start "" "%DEST%\XingLianCast.exe"
 :done
 endlocal
 exit /b 0

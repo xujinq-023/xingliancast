@@ -131,7 +131,7 @@ static class App
                 File.WriteAllText(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "setup_error.log"), log.ToString());
                 Environment.Exit(2);
             }
-            string exe = Path.Combine(dir, "ProjectorUi.exe");
+            string exe = Path.Combine(dir, "XingLianCast.exe");
             try { App.CreateShortcut(App.StartMenuLnk, exe, dir, Path.Combine(dir, "logo.ico")); log.AppendLine("startmenu OK"); }
             catch (Exception ex) { log.AppendLine("startmenu FAIL: " + ex.Message); }
             try { App.CreateShortcut(App.DesktopLnk, exe, dir, Path.Combine(dir, "logo.ico")); log.AppendLine("desktop OK"); }
@@ -501,7 +501,7 @@ class InstallForm : Form
     {
         string dir = _dir.Text.Trim();
         if (dir.Length == 0) { MessageBox.Show(this, "请填写安装位置", App.Name); return; }
-        if (Directory.Exists(dir) && File.Exists(Path.Combine(dir, "ProjectorUi.exe")))
+        if (Directory.Exists(dir) && File.Exists(Path.Combine(dir, "XingLianCast.exe")))
         {
             if (MessageBox.Show(this, "该目录已安装星联投屏，是否覆盖安装？", App.Name,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -535,7 +535,7 @@ class InstallForm : Form
                 string certMsg = App.InstallCertificate(Path.Combine(dir, "xinglian-codesign.cer"));
                 if (certMsg.StartsWith("证书安装失败")) _warn.Add(certMsg);
                 BeginInvoke((Action)delegate { _bar.Value = 70; _status.Text = "正在创建快捷方式…"; });
-                string exe = Path.Combine(dir, "ProjectorUi.exe");
+                string exe = Path.Combine(dir, "XingLianCast.exe");
                 try { App.CreateShortcut(App.StartMenuLnk, exe, dir, Path.Combine(dir, "logo.ico")); }
                 catch (Exception e1) { _warn.Add("开始菜单快捷方式：" + e1.Message); }
                 if (_desktop.Checked)
@@ -602,7 +602,7 @@ class InstallForm : Form
         {
             try
             {
-                Process.Start(new ProcessStartInfo(Path.Combine(dir, "ProjectorUi.exe")) { WorkingDirectory = dir });
+                Process.Start(new ProcessStartInfo(Path.Combine(dir, "XingLianCast.exe")) { WorkingDirectory = dir });
             }
             catch { }
         }
@@ -694,8 +694,8 @@ class UninstallForm : Form
     {
         try
         {
-            foreach (var p in Process.GetProcessesByName("ProjectorUi")) { try { p.Kill(); } catch { } }
-            foreach (var p in Process.GetProcessesByName("sender")) { try { p.Kill(); } catch { } }
+            foreach (var p in Process.GetProcessesByName("XingLianCast")) { try { p.Kill(); } catch { } }
+            foreach (var p in Process.GetProcessesByName("XingLianCastSender")) { try { p.Kill(); } catch { } }
             System.Threading.Thread.Sleep(400);
 
             TryDelete(App.StartMenuLnk);

@@ -11,7 +11,7 @@
 
 namespace lic {
 
-// --- 公钥（与 ProjectorUi.exe 中一致，X/Y 为 base64）---
+// --- 公钥（与 XingLianCast.exe 中一致，X/Y 为 base64）---
 static const char* kPubX = "2Z7kYMRV9Tt3n638nxJbIL5RZ54GRAIo2GkduUqAxK8=";
 static const char* kPubY = "j5/5Bkmi/0B6g6n8N2PMwD6psGXzXxZiweDxDZztg+Y=";
 static const int kPayloadLen = 12;

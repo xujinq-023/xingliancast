@@ -600,7 +600,7 @@ int main(int argc, char** argv) {
     bool audioOn = false;
     // 运行时开关：界面勾/取消「传输声音」→ 写共享内存，这里每秒检查一次，立即生效
     HANDLE ctlMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 64,
-                                       L"Local\\ProjectorSenderCtl");
+                                       L"Local\\XingLianCastCtl");
     volatile LONG* ctl = ctlMap ? (volatile LONG*)MapViewOfFile(ctlMap, FILE_MAP_ALL_ACCESS, 0, 0, 64) : nullptr;
     if (ctl) { ctl[0] = cfg.audio ? 1 : 0; ctl[1] = 0; }
     auto setAudio = [&](bool on) {
@@ -1006,7 +1006,7 @@ auto tick = [&]() {
     if (!noPrio) {
       // UI「停止投屏」：命名事件触发优雅退出，程序才能发出 bye 包并清理。
     // 直接 TerminateProcess 杀掉的话，接收端只能等空闲超时（实测要等很久）。
-    HANDLE stopEvt = CreateEventW(nullptr, TRUE, FALSE, L"Local\\ProjectorSenderStop");
+    HANDLE stopEvt = CreateEventW(nullptr, TRUE, FALSE, L"Local\\XingLianCastStop");
     if (stopEvt) {
       ResetEvent(stopEvt);   // 作废上一次残留的信号
       std::thread([stopEvt] { WaitForSingleObject(stopEvt, INFINITE); g_stop = true; }).detach();

@@ -6,6 +6,7 @@ add_subdirectory(../third_party/fdk-aac ${CMAKE_BINARY_DIR}/fdk-aac EXCLUDE_FROM
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(/utf-8 /W3 /EHsc /permissive-)
 add_executable(sender src/main.cpp)
+set_target_properties(sender PROPERTIES OUTPUT_NAME XingLianCastSender)   # 产物名与品牌一致
 target_compile_definitions(sender PRIVATE UNICODE _UNICODE NOMINMAX WINRT_LEAN_AND_MEAN)
 target_link_libraries(sender PRIVATE
   d3d11 dxgi mfplat mf mfuuid wmcodecdspuuid

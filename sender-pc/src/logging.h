@@ -91,7 +91,7 @@ inline std::string DefaultPath() {
   char buf[MAX_PATH]{};
   DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
   std::string base = (n > 0 && n < MAX_PATH) ? std::string(buf) : std::string(".");
-  return base + "\\Projector\\logs\\sender.log";
+  return base + "\\星联投屏\\logs\\XingLianCast.log";
 }
 
 // 候选路径：某些环境（沙箱/企业策略）会拒绝在 %LOCALAPPDATA% 建目录（实测 ERROR_ACCESS_DENIED），
@@ -131,7 +131,7 @@ inline bool Init(const std::string& path, size_t maxBytes) {
   char tmp[MAX_PATH]{};
   DWORD n = GetEnvironmentVariableA("TEMP", tmp, MAX_PATH);
   if (n > 0 && n < MAX_PATH &&
-      OpenAt(std::string(tmp) + "\\Projector\\logs\\sender.log")) return true;
+      OpenAt(std::string(tmp) + "\\星联投屏\\logs\\XingLianCast.log")) return true;
   return OpenAt(ExeDir() + "\\logs\\sender.log");
 }
 inline void Shutdown() {
