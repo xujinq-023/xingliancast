@@ -1,0 +1,27 @@
+// 在 NV12 平面上做一次可分离盒式模糊（就地为隐私打码，锁屏暂停时用）
+static void BlurPlane(uint8_t* p, int w, int h, int radius) {
+  if (!p || w <= 0 || h <= 0 || radius <= 0) return;
+  std::vector<uint8_t> tmp((size_t)w * h);
+  // 水平
+  for (int y = 0; y < h; y++) {
+    uint8_t* row = p + (size_t)y * w;
+    int acc = 0, cnt = 0;
+    for (int x = 0; x < w + radius; x++) {
+      if (x < w) { acc += row[x]; cnt++; }
+      if (x - radius - 1 >= 0) { acc -= row[x - radius - 1]; cnt--; }
+      int dx = x - radius;
+      if (dx >= 0 && dx < w) tmp[(size_t)y * w + dx] = (uint8_t)(acc / (cnt ? cnt : 1));
+    }
+  }
+  // 垂直
+  for (int x = 0; x < w; x++) {
+    int acc = 0, cnt = 0;
+    for (int y = 0; y < h + radius; y++) {
+      if (y < h) { acc += tmp[(size_t)y * w + x]; cnt++; }
+      if (y - radius - 1 >= 0) { acc -= tmp[(size_t)(y - radius - 1) * w + x]; cnt--; }
+      int dy = y - radius;
+      if (dy >= 0 && dy < h) p[(size_t)dy * w + x] = (uint8_t)(acc / (cnt ? cnt : 1));
+    }
+  }
+}
+

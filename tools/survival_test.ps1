@@ -1,7 +1,7 @@
 # 页堆生存测试：启动 sender 5.5 分钟，检查存活 + 事件日志 + 新 dump
 param([string]$ExtraArgs = '')
 $ErrorActionPreference = 'Continue'
-$exe = 'D:\DSH-Workplace\projector\sender-pc\build\sender.exe'
+$exe = 'D:\DSH-Workplace\XingLianCast\sender-pc\build\sender.exe'
 $log = "$env:TEMP\pjs_tv_pageheap.txt"
 Remove-Item $log,$env:TEMP\pjs_tv_pageheap.err.txt -EA SilentlyContinue
 $d0 = (Get-ChildItem 'D:\DSH-Workplace\wdumps\*.dmp' -EA SilentlyContinue).Count

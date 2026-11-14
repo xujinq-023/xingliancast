@@ -1,0 +1,46 @@
+start
+d3d ok
+setup ok (mem input)
+hw enum: hr=0x00000000 n=12
+== try [0] NVIDIA H.264 Encoder MFT (async=1)
+  unlock 0x00000000
+  codec attrs ok
+  SET_D3D skipped(mem)
+  SetOutputType 0x00000000
+  in[0] sub={4f303234-0000} 2560x1440
+  in[1] sub={3231564e-0000} 2560x1440
+  in[2] sub={00000015-0000} 2560x1440
+  SetInputType(native) 0x00000000
+  StartOfStream 0x00000000
+  QI(eventgen) 0x00000000
+frame 1: 0 bytes  nal=-1  t=9.1ms
+frame 2: 0 bytes  nal=-1  t=15.5ms
+frame 3: 0 bytes  nal=-1  t=20.7ms
+frame 4: 0 bytes  nal=-1  t=27.3ms
+frame 5: 0 bytes  nal=-1  t=34.1ms
+frame 6: 0 bytes  nal=-1  t=40.0ms
+frame 7: 0 bytes  nal=-1  t=45.4ms
+frame 8: 0 bytes  nal=-1  t=50.8ms
+frame 9: 0 bytes  nal=-1  t=57.2ms
+frame 10: 0 bytes  nal=-1  t=68.6ms
+frame 11: 0 bytes  nal=-1  t=73.7ms
+frame 12: 0 bytes  nal=-1  t=78.6ms
+frame 13: 0 bytes  nal=-1  t=83.9ms
+frame 14: 0 bytes  nal=-1  t=88.9ms
+frame 15: 0 bytes  nal=-1  t=94.0ms
+frame 16: 0 bytes  nal=-1  t=99.5ms
+frame 17: 0 bytes  nal=-1  t=104.5ms
+frame 18: 0 bytes  nal=-1  t=109.4ms
+frame 19: 0 bytes  nal=-1  t=115.6ms
+frame 20: 0 bytes  nal=-1  t=120.7ms
+frame 21: 0 bytes  nal=-1  t=125.6ms
+frame 22: 0 bytes  nal=-1  t=131.6ms
+frame 23: 0 bytes  nal=-1  t=136.7ms
+frame 24: 0 bytes  nal=-1  t=141.7ms
+frame 25: 0 bytes  nal=-1  t=146.7ms
+frame 26: 0 bytes  nal=-1  t=151.7ms
+frame 27: 0 bytes  nal=-1  t=156.5ms
+frame 28: 0 bytes  nal=-1  t=161.0ms
+frame 29: 0 bytes  nal=-1  t=165.8ms
+frame 30: 0 bytes  nal=-1  t=170.5ms
+  wait=ok sent=30 got=30 fail=0x00000000 elapsed=170.6ms  avg=5.69ms/frame  ~fps=175.8

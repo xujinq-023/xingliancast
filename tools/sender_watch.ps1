@@ -1,6 +1,6 @@
 # sender_watch.ps1 - keep sender alive; log exits with timestamps
 param([string]$Ip = '10.5.9.22')
-$exe = 'D:\DSH-Workplace\projector\sender-pc\build\sender.exe'
+$exe = 'D:\DSH-Workplace\XingLianCast\sender-pc\build\sender.exe'
 $log = Join-Path $env:TEMP 'pjs_tv.txt'
 $round = 0
 while ($true) {

@@ -1,4 +1,4 @@
-# build
+# build output
 build/
 .gradle/
 *.o
@@ -13,7 +13,26 @@ CMakeCache.txt
 CMakeFiles/
 out/
 
-# tools/data
+# test data
 *.pcap
 *.pcapng
 *.mp4
+
+# secrets - never commit
+signing/
+installer/tools/license-private.txt
+
+# packaging output
+installer/dist/
+build-tools/
+installer/setup/payload.zip
+*.zip
+
+# noise
+*.log
+*.bak-*
+sender-pc/ui/obf/
+sender-pc/ui/icon_*.png
+sender-pc/ui/logo_*.png
+sender-pc/ui/*_s.png
+installer/setup/*.png

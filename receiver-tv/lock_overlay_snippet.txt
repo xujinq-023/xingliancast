@@ -1,0 +1,80 @@
+    // ---------------- 暂停遮罩（模糊化） ----------------
+    private FrameLayout lockPanel;
+    private ImageView lockImage;
+    private TextView lockText;
+
+    /** 抓取当前 SurfaceView 画面 → 强降采样 → 拉回全屏，得到"磨砂"效果（SurfaceView 无法直接用 View 糊）。 */
+    private void captureBlurredFrame() {
+        if (surfaceView == null || lockImage == null) return;
+        final int w = surfaceView.getWidth(), h = surfaceView.getHeight();
+        if (w <= 0 || h <= 0) return;
+        try {
+            final Bitmap full = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            android.view.PixelCopy.request(surfaceView, full, new android.view.PixelCopy.OnPixelCopyFinishedListener() {
+                @Override public void onPixelCopyFinished(int result) {
+                    if (result != android.view.PixelCopy.SUCCESS) { full.recycle(); return; }
+                    try {
+                        // 1/32 降采样再放大 = 强模糊（文字细节彻底不可辨，保护隐私）
+                        int sw = Math.max(6, w / 32), sh = Math.max(4, h / 32);
+                        Bitmap small = Bitmap.createScaledBitmap(full, sw, sh, true);
+                        // 小图上再做两轮缩放，抹掉像素块感
+                        Bitmap s2 = Bitmap.createScaledBitmap(small, Math.max(4, sw / 2), Math.max(3, sh / 2), true);
+                        Bitmap blur = Bitmap.createScaledBitmap(s2, w, h, true);
+                        lockImage.setImageBitmap(blur);
+                        lockImage.setVisibility(View.VISIBLE);
+                        full.recycle();
+                    } catch (Throwable t) {
+                        full.recycle();
+                    }
+                }
+            }, uiHandler);
+        } catch (Throwable ignored) {
+            // 部分设备/分辨率不支持 PixelCopy：退化为纯色底（仍有隐私效果）
+        }
+    }
+
+    private void buildLockPanel(FrameLayout root) {
+        lockPanel = new FrameLayout(this);
+        lockPanel.setVisibility(View.GONE);
+
+        lockImage = new ImageView(this);
+        lockImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        lockImage.setVisibility(View.GONE);
+        lockPanel.addView(lockImage, new FrameLayout.LayoutParams(-1, -1));
+
+        // 轻微压暗，保证文字可读（不追求很黑，模糊本身已在保护隐私）
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x55000000);
+        lockPanel.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+
+        lockText = new TextView(this);
+        lockText.setTextColor(0xFFFFFFFF);
+        lockText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f);
+        lockText.setGravity(Gravity.CENTER);
+        lockText.setShadowLayer(6f, 0f, 2f, 0xCC000000);
+        lockPanel.addView(lockText, new FrameLayout.LayoutParams(-1, -1));
+
+        root.addView(lockPanel, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    /** 显示/隐藏暂停遮罩；text 为 null 表示隐藏。blur=true 时抓当前画面做模糊底。 */
+    private void showOverlay(String text, boolean show) {
+        if (lockPanel == null) return;
+        if (!show || text == null) {
+            lockPanel.setVisibility(View.GONE);
+            if (lockImage != null) { lockImage.setImageBitmap(null); lockImage.setVisibility(View.GONE); }
+            return;
+        }
+        lockText.setText(text);
+        lockPanel.setVisibility(View.VISIBLE);
+        lockPanel.bringToFront();
+        captureBlurredFrame();
+        if (text != null && text.startsWith("被投显示器")) {
+            uiHandler.removeCallbacks(overlayTimeout);
+            uiHandler.postDelayed(overlayTimeout, 3000);
+        }
+    }
+
+    private final Runnable overlayTimeout = new Runnable() {
+        @Override public void run() { showOverlay(null, false); }
+    };

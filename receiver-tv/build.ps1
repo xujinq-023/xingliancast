@@ -39,7 +39,7 @@ $ResDir = Join-Path $Root 'res'
 if (Test-Path $ResDir) {
     $FlatZip = Join-Path $Gen 'res.zip'
     Invoke-Tool (Join-Path $Bt 'aapt2.exe') @('compile', '--dir', $ResDir, '-o', $FlatZip) | Out-Null
-    $ResFlags = @('--res', $FlatZip)
+    $ResFlags = @($FlatZip)   # aapt2 link 把编译后的资源 zip 作为位置参数，而不是 --res
 }
 
 # ---------- 2. aapt2 link ----------

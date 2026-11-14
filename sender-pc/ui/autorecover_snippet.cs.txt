@@ -1,0 +1,88 @@
+        /// <summary>自动恢复按钮的外观：开=绿色，关=灰色。</summary>
+        void ApplyAutoRecoverStyle()
+        {
+            if (_btnAutoRecover == null) return;
+            _btnAutoRecover.Text = _autoRecover ? "自动恢复：开" : "自动恢复：关";
+            _btnAutoRecover.Fill = _autoRecover ? T.OkFill : T.StopFill;
+            _btnAutoRecover.FillHover = _autoRecover ? T.OkHover : T.Hover;
+            _btnAutoRecover.Stroke = _autoRecover ? T.OkFill : T.StopStroke;
+            _btnAutoRecover.TextColor = _autoRecover ? Color.White : T.StopText;
+            _btnAutoRecover.Invalidate();
+        }
+
+        string UiConfigPath
+        {
+            get
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "星联投屏");
+                Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "ui.cfg");
+            }
+        }
+
+        void LoadUiConfig()
+        {
+            try
+            {
+                foreach (var ln in File.ReadAllLines(UiConfigPath))
+                {
+                    int eq = ln.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string k = ln.Substring(0, eq).Trim(), v = ln.Substring(eq + 1).Trim();
+                    if (k == "autoRecover") _autoRecover = (v == "1");
+                }
+            }
+            catch { }
+        }
+
+        void SaveUiConfig()
+        {
+            try { File.WriteAllText(UiConfigPath, "autoRecover=" + (_autoRecover ? "1" : "0") + Environment.NewLine); }
+            catch { }
+        }
+
+        /// <summary>意外中断后的自动重连：2s → 4s → 8s → 10s 退避。</summary>
+        void ScheduleAutoRecover(string reason)
+        {
+            if (!_wantCast || !_autoRecover || _closing) return;
+            Log("[auto] 计划恢复投屏：" + reason + "，" + _retryDelay + "ms 后重试");
+            if (_retryTimer == null)
+            {
+                _retryTimer = new System.Windows.Forms.Timer();
+                _retryTimer.Tick += delegate
+                {
+                    _retryTimer.Stop();
+                    if (_closing || !_wantCast || !_autoRecover) return;
+                    if (_proc != null && !_proc.HasExited) return;
+                    Log("[auto] 重试开始投屏");
+                    StartSender();
+                };
+            }
+            _retryTimer.Stop();
+            _retryTimer.Interval = _retryDelay;
+            _retryTimer.Start();
+            _retryDelay = Math.Min(10000, _retryDelay * 2);
+        }
+
+        /// <summary>投屏中监视：被投显示器是否还在？不在则切回主屏并通知电视。</summary>
+        void CheckMonitorAlive()
+        {
+            if (_proc == null || _proc.HasExited) return;
+            if (_cboMonitor.SelectedIndex <= 0) return;      // 主屏/未选：不处理
+            try
+            {
+                var list = Monitors.List();
+                bool still = false;
+                string sel = _cboMonitor.SelectedItem != null ? _cboMonitor.SelectedItem.ToString() : "";
+                foreach (var m in list) if (m.ToString() == sel) { still = true; break; }
+                if (still) return;
+                Log("[auto] 被投显示器已消失，回退到主显示器");
+                _cboMonitor.SelectedIndex = 0;
+                _switchedNotice = true;
+                StopSender();
+                _wantCast = true;
+                StartSender();
+            }
+            catch { }
+        }
+

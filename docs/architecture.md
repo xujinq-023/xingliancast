@@ -100,7 +100,7 @@
 ## 6. 目录规划
 
 ```
-D:\DSH-Workplace\projector\
+D:\DSH-Workplace\XingLianCast\
   docs/architecture.md  reverse/protocol-notes.md + airplay-notes.md(逆向记录)
   protocol/pjs-spec.md  protocol/vectors/(跨语言测试向量)
   sender-pc/        (C++, CMake)

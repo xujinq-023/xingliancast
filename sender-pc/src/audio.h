@@ -18,6 +18,7 @@
 #include <thread>
 #include <vector>
 #include <wrl/client.h>
+#include "logging.h"
 using Microsoft::WRL::ComPtr;
 
 namespace aud {
@@ -29,6 +30,7 @@ class AudioPipe {
   // kbps: AAC 码率。返回 false 表示无默认输出设备/编码器不可用（调用方可降级为纯视频）。
   bool Start(int kbps, const Fn& on_frame) {
     on_ = on_frame;
+    stop_ = false; started_ = false; err_ = S_OK;   // 支持 Stop 后再 Start（界面实时开关声音）
     thr_ = std::thread([this, kbps] { Run(kbps); });
     return true;   // 设备错误在 Run 内通过 started_/err_ 汇报
   }
@@ -59,7 +61,7 @@ class AudioPipe {
     e = aacEncEncode(h, nullptr, nullptr, nullptr, nullptr);
     if (e != AACENC_OK) { aacEncClose(&h); err_ = (HRESULT)e; return false; }
     enc_ = h;
-    printf("[audio] fdk-aac 就绪: AAC-LC %uHz/%uch %dkbps → ADTS\n", erate_, ech_, kbps);
+    Logf("[audio] fdk-aac 就绪: AAC-LC %uHz/%uch %dkbps → ADTS\n", erate_, ech_, kbps);
     return true;
   }
 
@@ -76,7 +78,7 @@ class AudioPipe {
     AACENC_OutArgs oa{};
     AACENC_ERROR e = aacEncEncode(enc_, &ind, &outd, &ia, &oa);
     if (e != AACENC_OK) {
-      if (++enc_err_ <= 3) printf("[audio] fdk 编码失败 err=0x%x\n", (unsigned)e);
+      if (++enc_err_ <= 3) Logf("[audio] fdk 编码失败 err=0x%x\n", (unsigned)e);
       return false;
     }
     if (oa.numOutBytes > 0) { on_(obuf_.data(), (size_t)oa.numOutBytes, ts_us); enc_err_ = 0; }

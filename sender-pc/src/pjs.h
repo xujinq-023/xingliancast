@@ -8,7 +8,7 @@
 #include <ws2tcpip.h>
 
 namespace pjs {
-enum Type : uint8_t { VIDEO = 0, AUDIO = 1, PKT_META = 2 };
+enum Type : uint8_t { VIDEO = 0, AUDIO = 1, PKT_META = 2, CTRL = 3 };
 enum Flags : uint8_t { FIRST = 1, LAST = 2, IDR = 4, KEY = 8, RETR = 16 };
 enum Kind : uint8_t { SLICE = 0, CFG = 1, KIND_META = 2 };
 constexpr size_t MAX_PAYLOAD = 1200;
@@ -75,12 +75,22 @@ class UdpOut {
   bool open(const char* ip, int port) {
     WSADATA w; if (WSAStartup(0x202, &w)) return false;
     s_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    // 每帧突发可达上百个包（IDR 更大），Windows UDP 默认发送缓冲只有 64KB，
+    // 缓冲耗尽时 sendto 返回 WSAENOBUFS 并静默丢包 → WiFi 端看到成片丢包。
+    int snd = 4 << 20;
+    ::setsockopt(s_, SOL_SOCKET, SO_SNDBUF, (const char*)&snd, sizeof snd);
     memset(&to_, 0, sizeof(to_)); to_.sin_family = AF_INET; to_.sin_port = htons((u_short)port);
     inet_pton(AF_INET, ip, &to_.sin_addr); return s_ != INVALID_SOCKET;
   }
   void send_raw(const std::vector<uint8_t>& b) {
-    ::sendto(s_, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&to_, sizeof(to_));
+    if (::sendto(s_, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&to_, sizeof(to_)) == SOCKET_ERROR)
+      sendErrs_++;   // WSAENOBUFS/WSAEWOULDBLOCK 等：以前静默丢弃，现在至少可观测
+    else
+      bytes_ += b.size();   // 统计实际流量（含 16B 头）
   }
+  uint64_t send_errors() const { return sendErrs_; }
+  uint64_t bytes() const { return bytes_; }          // 累计发送字节（视频+音频+meta+控制）
+  uint64_t audio_bytes() const { return abytes_; }
   // 访问单元 → 一包一 NAL；超长 NAL 切 ≤1200B 片。AU 首 NAL 置 FIRST、末 NAL 置 LAST。
   void send_au(const uint8_t* au, size_t n, uint64_t ts_us, bool key, bool idr) {
     auto nals = split_nals(au, n);
@@ -122,11 +132,63 @@ class UdpOut {
   }
   // 音频: 一包一 ADTS AAC 帧 (spec §3: type=AUDIO codec=1)。仅音频线程调用。
   void send_audio(const uint8_t* f, size_t n, uint64_t ts_us) {
-    send_raw(packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, SLICE, f, n));
+    auto pkt = packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, SLICE, f, n);
+    abytes_ += pkt.size();
+    send_raw(pkt);
   }
+  // 主动断开：接收端收到后立即释放解码器并回到「等待连接」，不用等空闲超时。
+  // UDP 可能丢包，连发 3 次（同一 seq 也无所谓，接收端只做动作不自增状态）。
+  void send_bye() {
+    const uint8_t m[3] = { 'b', 'y', 'e' };
+    for (int i = 0; i < 3; i++)
+      send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, m, 3));
+  }
+  // 会话开始：接收端据此复位重组器并重新配置解码器（替代「靠 meta 序号回退猜重启」的旧逻辑，
+  // 那个逻辑会在启动瞬间误判，把刚发出的 IDR 丢掉 → 电视要等用户动鼠标才出画）。
+  void send_hello() {
+    const uint8_t m[2] = { 'h', 'i' };
+    for (int i = 0; i < 3; i++)
+      send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, m, 2));
+  }
+  // 心跳：桌面静止 + --noaudio 时链路上没有任何包头，接收端会误判断开（空闲超时）。
+  void send_keepalive() {
+    const uint8_t m[2] = { 'k', 'a' };
+    send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, m, 2));
+  }
+  // ping：走视频通道（接收端 stepCtrl 收到 "p<ms>" 会回 "q<ms>" 到 PC 的 45692）
+  void send_ping(uint64_t ms) {
+    char b[24];
+    int n = snprintf(b, sizeof b, "p%llu", (unsigned long long)ms);
+    send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, (const uint8_t*)b, (size_t)n));
+  }
+  // 发送任意两字母 CTRL 指令（lk=已锁屏 / ul=已解锁 / sw=已切换显示器）
+  void send_ctrl2(char a, char b) {
+    const uint8_t m[2] = { (uint8_t)a, (uint8_t)b };
+    for (int i = 0; i < 2; i++)   // UDP 丢包：连发两次
+      send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, m, 2));
+  }
+  // 上报本机计算机名（电视端显示"源设备 名称 · IP"）："hn<name>"
+  // 本机 UDP 实际绑定端口（发给电视端显示"电脑 IP:端口"）
+  int local_port() const {
+    sockaddr_in a{}; int len = (int)sizeof a;
+    if (getsockname(s_, (sockaddr*)&a, &len) == 0) return ntohs(a.sin_port);
+    return 0;
+  }
+  void send_hostname(const char* name) {
+    if (!name || !*name) return;
+    char b[96];
+    int n = snprintf(b, sizeof b, "hn%s\t%d", name, local_port());
+    if (n <= 2) return;
+    for (int i = 0; i < 3; i++)
+      send_raw(packet(CTRL, 0, ++cseq_, 0, FIRST | LAST, SLICE, (const uint8_t*)b, (size_t)n));
+  }
+  void send_lock()   { send_ctrl2('l', 'k'); }
+  void send_unlock() { send_ctrl2('u', 'l'); }
+  void send_switched() { send_ctrl2('s', 'w'); }
   uint64_t packets() const { return vseq_ + mseq_ + aseq_; }
   uint32_t audio_packets() const { return aseq_; }
  private:
-  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{}; uint32_t vseq_ = 0, mseq_ = 0, aseq_ = 0;
+  SOCKET s_ = INVALID_SOCKET; sockaddr_in to_{}; uint32_t vseq_ = 0, mseq_ = 0, aseq_ = 0, cseq_ = 0;
+  uint64_t sendErrs_ = 0, bytes_ = 0, abytes_ = 0;
 };
 } // namespace pjs

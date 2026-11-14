@@ -1,10 +1,10 @@
 # Run ASan sender.exe for 240s; report ASan errors or survival.
 $ErrorActionPreference = 'Continue'
-$exe = 'D:\DSH-Workplace\projector\sender-pc\build-asan\sender.exe'
+$exe = 'D:\DSH-Workplace\XingLianCast\sender-pc\build-asan\sender.exe'
 $log = "$env:TEMP\pjs_asan_out.txt"
 Remove-Item $log -ErrorAction SilentlyContinue
 $vcvars = 'D:\Dev\VS2022BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-$bat = 'D:\DSH-Workplace\projector\tools\asan_env.bat'
+$bat = 'D:\DSH-Workplace\XingLianCast\tools\asan_env.bat'
 $errlog = "$env:TEMP\pjs_asan_err.txt"
 Remove-Item $errlog -ErrorAction SilentlyContinue
 $p = Start-Process cmd -ArgumentList '/c', $bat -PassThru -WindowStyle Hidden `

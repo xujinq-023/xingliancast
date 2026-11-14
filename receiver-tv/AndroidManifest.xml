@@ -14,8 +14,8 @@
     <uses-feature android:name="android.hardware.hdmi.cec" android:required="false" />
 
     <application
-        android:label="ProjectorRX"
-        android:icon="@android:drawable/ic_menu_slideshow"
+        android:label="星联投屏"
+        android:icon="@mipmap/logo"
         android:hardwareAccelerated="true"
         android:allowBackup="false">
         <activity

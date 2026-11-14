@@ -1,0 +1,89 @@
+    /// <summary>托盘替代：进程权限低于任务栏时无法注册托盘图标，改为悬浮迷你条。</summary>
+    class MiniBar : Form
+    {
+        readonly MainForm _owner;
+        readonly TipLabel _tip;
+
+        public MiniBar(MainForm owner)
+        {
+            _owner = owner;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            AutoScaleMode = AutoScaleMode.None;
+            BackColor = T.Accent;
+            ClientSize = T.Sz(168, 40);
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+
+            _tip = new TipLabel();
+            _tip.Dock = DockStyle.Fill;
+            _tip.Text = "星联投屏 · 已最小化";
+            _tip.ForeColor = Color.White;
+            _tip.BackColor = Color.Transparent;
+            _tip.Font = T.F(12, true);
+            _tip.TextAlign = ContentAlignment.MiddleCenter;
+            _tip.Cursor = Cursors.Hand;
+            Controls.Add(_tip);
+
+            _tip.MouseClick += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) _owner.RestoreFromTray();
+                else if (e.Button == MouseButtons.Right) _owner.ShowTrayMenu(Cursor.Position);
+            };
+            _tip.DoubleClick += delegate { _owner.RestoreFromTray(); };
+
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            Location = new Point(wa.Right - Width - T.I(18), wa.Bottom - Height - T.I(18));
+            Opacity = 0.95;
+        }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            T.Rounded(g, new Rectangle(0, 0, Width - 1, Height - 1), T.I(20), T.Accent, T.Accent);
+        }
+
+        public void SetText(string s) { _tip.Text = s; }
+
+        const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr64(IntPtr h, int i);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr64(IntPtr h, int i, IntPtr v);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowLong32(IntPtr h, int i);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] static extern int SetWindowLong32(IntPtr h, int i, int v);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                if (IntPtr.Size == 8)
+                {
+                    long v = GetWindowLongPtr64(Handle, GWL_EXSTYLE).ToInt64();
+                    SetWindowLongPtr64(Handle, GWL_EXSTYLE, new IntPtr(v | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE));
+                }
+                else
+                {
+                    int v = GetWindowLong32(Handle, GWL_EXSTYLE);
+                    SetWindowLong32(Handle, GWL_EXSTYLE, v | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+                }
+            }
+            catch { }
+        }
+    }
+
+    class TipLabel : Label
+    {
+        public TipLabel()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint, true);
+            BackColor = Color.Transparent;
+            AutoSize = false;
+        }
+    }

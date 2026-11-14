@@ -1,7 +1,7 @@
 # sender-pc build (PS 5.1 safe: ASCII only). Usage: powershell -File tools\build-sender.ps1 [-Clean]
 param([switch]$Clean)
-$root = 'D:\DSH-Workplace\projector\sender-pc'
-. D:\DSH-Workplace\projector\tools\env.ps1
+$root = 'D:\DSH-Workplace\XingLianCast\sender-pc'
+. D:\DSH-Workplace\XingLianCast\tools\env.ps1
 $build = Join-Path $root 'build'
 if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
 New-Item -ItemType Directory -Force -Path $build | Out-Null

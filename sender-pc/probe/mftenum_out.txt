@@ -1,0 +1,17 @@
+== NV12-H264 HARDWARE: hr=0x00000000  n=0
+== NV12-H264 HW no-SORT: hr=0x00000000  n=0
+== NV12-in-only HW no-SORT: hr=0x00000000  n=0
+== NV12-H264 SOFT: hr=0x00000000  n=0
+== ALL (0x3F) ANY-TYPE: hr=0x00000000  n=12
+  [0] NVIDIA H.264 Encoder MFT
+  [1] ?
+  [2] ?
+  [3] NVIDIA HEVC Encoder MFT
+  [4] ?
+  [5] ?
+  [6] (activate-failed hr=0xc004f011)
+  [7] Microsoft AVC DX12 Encoder HMFT
+  [8] ?
+  [9] Microsoft HEVC DX12 Encoder HMFT
+  [10] ?
+  [11] ?

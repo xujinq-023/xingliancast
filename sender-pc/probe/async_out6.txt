@@ -1,0 +1,16 @@
+start
+d3d ok
+setup ok
+hw enum: hr=0x00000000 n=12
+== try [0] NVIDIA H.264 Encoder MFT (async=1)
+  unlock 0x00000000
+  codec attrs ok
+  SET_D3D 0xc0000005
+  SetOutputType 0x00000000
+  in[0] sub={4f303234-0000} 2560x1440
+  in[1] sub={3231564e-0000} 2560x1440
+  in[2] sub={00000015-0000} 2560x1440
+  SetInputType(native) 0x00000000
+  StartOfStream 0x00000000
+  QI(eventgen) 0x00000000
+  wait=TIMEOUT sent=0 got=0 fail=0x00000000 elapsed=20001.8ms  avg=0.00ms/frame  ~fps=0.0

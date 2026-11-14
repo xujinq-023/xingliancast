@@ -1,5 +1,6 @@
 package tv.projector.receiver;
 
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -17,8 +18,10 @@ import android.view.Surface;
 import java.io.ByteArrayOutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Locale;
@@ -38,15 +41,16 @@ public final class RxEngine {
     public static final int PORT = 45690;
     private static final int H = 16;
     private static final int F_FIRST = 1, F_LAST = 2, F_IDR = 4, F_KEY = 8, F_RETR = 16;
-    private static final int T_VIDEO = 0, T_AUDIO = 1, T_META = 2;
+    private static final int T_VIDEO = 0, T_AUDIO = 1, T_META = 2, T_CTRL = 3;
     private static final String TAG = "pjs-rx";
     private static final int MAX_AU = 1 << 20;          // 1 MiB per access unit cap
-    private static final long IDLE_MS = 30_000L;        // 30s of silence -> listening
+    private static final long IDLE_MS = 3_000L;         // 3s of silence -> listening (bye packet covers the normal case)
 
     private static final int MSG_FRAME = 1, MSG_CFG = 2, MSG_SURFACE = 3, MSG_TICK = 4,
-            MSG_ERR = 5, MSG_AUDIO = 6;
+            MSG_ERR = 5, MSG_AUDIO = 6, MSG_CTRL_BYE = 7, MSG_CTRL_HELLO = 8;
 
-    public interface UiSink { void onStatus(String text); }
+    /** 界面回调：onStatus 走状态文本；onEvent 走一次性事件（lk/ul/sw）。 */
+    public interface UiSink { void onStatus(String text); void onEvent(String ev); }
 
     private final HandlerThread thread;
     private final Handler pipe;
@@ -61,10 +65,23 @@ public final class RxEngine {
     private final Asm vAsm = new Asm();                 // video packet assembler
     private final Asm mAsm = new Asm();                 // meta packet assembler
     private volatile long lastRxMs;
+    private int tickN = 0;
+    private long lastHelloMs = 0;      // hello 连发 3 次，去重避免重复 reconfig
     private volatile String peer = "-";
     private volatile boolean asmReset = true;           // set by pipe, applied by rx
     private int metaTsHi = -1;                          // ts high bits from latest meta
     private long tsBase, lastTs64;                      // ts_lo -> ts64 wrap correction
+    private long lastMetaSeq = -1;                      // sender restart detector (mseq goes back to 1)
+
+    // ---- 上屏节拍（vsync 对齐）----
+    /** 每帧一格 = 60Hz；设为 0 则回到「解码完立即上屏」。
+     *  实测节拍模式会让画面出现卡顿（鼠标移动越快越明显），已回退到 0。 */
+    private static final long RENDER_PACE_NS = 0L;
+    /** 视频延迟(ms)对齐音频：TV 音频链路实测 ~150ms（AudioTrack 缓冲 + HAL 145ms），
+     *  视频链路只有 ~75ms，音频明显偏晚 → 把视频也推迟同样的量。 */
+    private static final long AV_SYNC_MS = 0;   // 0 = 不做音画同步（用户优先保证画面流畅）
+    private static final long PACE_LEAD_NS = 2_000_000L; // 首帧/重锚提前量
+    private long nextRenderNs = 0;                       // pipe 线程/编解码回调线程使用
 
     // ---- pipeline-thread state ----
     private MediaCodec codec;
@@ -88,10 +105,23 @@ public final class RxEngine {
 
     // ---- audio path (own "pjs-aud" thread, M3): ADTS -> MediaCodec AAC -> AudioTrack ----
     private volatile Handler audh;                     // lazy: created on first audio packet
+    private final Discovery disc = new Discovery(android.os.Build.MODEL);
+    private volatile long aWrittenBytes = 0;           // 写入 AudioTrack 的 PCM 字节数（测算缓冲延迟）
     private HandlerThread athread;
     private final AtomicInteger aPend = new AtomicInteger();
     private long aLastSeq = -1;                        // rx-thread only
     private volatile long lastAudioMs;
+    private volatile long lastFrameWall;     // 最近一次真正解出帧的墙上时间
+    private volatile boolean pauseShown;     // 已提示"画面已暂停"
+    private volatile long lastRxWall;        // 最近一次收到任何包
+    private volatile String pcName = "";      // 电脑端计算机名（由 hn 指令上报）
+    private volatile String pcPort = "";      // 电脑端 UDP 端口
+    // 独立丢包统计（不影响重组逻辑）：只按"相邻收到的视频序号差"累加
+    private long lastSeenVSeq = -1;
+    private long lostPkts;
+    private long lostReported;
+    private volatile long freezeUntil;
+    private DatagramSocket fbSock;
     private MediaCodec acodec;                         // aud-thread only
     private AudioTrack atrack;                         // aud-thread only
     private int aRate, aCh;                            // aud-thread only
@@ -126,6 +156,7 @@ public final class RxEngine {
         startRx();
         pipe.sendEmptyMessageDelayed(MSG_TICK, 1000);
         postStatus();
+        disc.start();                       // 局域网发现信标（UDP 45691，每秒一次）
     }
 
     // ---------------- public API (call from UI thread) ----------------
@@ -136,6 +167,7 @@ public final class RxEngine {
 
     public void stop() {
         running = false;
+        disc.stop();
         DatagramSocket s = socket;
         if (s != null) { try { s.close(); } catch (Throwable ignored) { } }
         if (rx != null) rx.interrupt();
@@ -159,6 +191,54 @@ public final class RxEngine {
         }, "pjs-rx");
         rx.setDaemon(true);
         rx.start();
+        Thread fb = new Thread(new Runnable() {
+            @Override public void run() { feedbackLoop(); }
+        }, "pjs-fb");
+        fb.setDaemon(true);
+        fb.start();
+    }
+
+    /** 每秒把接收端状态回传给 PC（UDP 45692），PC 界面据此显示 TV 侧指标。 */
+    private void feedbackLoop() {
+        while (running) {
+            try {
+                String ip = peer;
+                if (ip != null && !ip.equals("?") && !ip.equals("-")) {
+                    InetAddress dst = InetAddress.getByName(ip);
+                    DatagramSocket s = fbSock;
+                    if (s == null) {
+                        s = new DatagramSocket();
+                        fbSock = s;
+                    }
+                    String txt = "PJS/F1"
+                        + "\nfps=" + String.format(Locale.US, "%.1f", fps)
+                        + "\nlost=" + (lostPkts - lostReported)
+                        + "\ndrop=" + droppedAu.get()
+                        + "\nidr=" + fedIdr.get()
+                        + "\naud=" + audioFed.get()
+                        + "\nadrop=" + audioDrop.get()
+                        + "\nres=" + (width > 0 ? width + "x" + height : "-");
+                    lostReported = lostPkts;
+                    byte[] b = txt.getBytes(StandardCharsets.UTF_8);
+                    s.send(new DatagramPacket(b, b.length, dst, 45692));
+                }
+            } catch (Throwable ignored) { }
+            try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+        }
+    }
+
+    /** 回复 PC 的 ping（"p<ms>" → "q<ms>"），用于测网络 RTT。 */
+    private void sendPong(byte[] payload) {
+        try {
+            String ip = peer;
+            if (ip == null || ip.equals("?") || ip.equals("-")) return;
+            String p = new String(payload, StandardCharsets.UTF_8);
+            if (!p.startsWith("p")) return;
+            DatagramSocket s = fbSock;
+            if (s == null) { s = new DatagramSocket(); fbSock = s; }
+            byte[] b = ("q" + p.substring(1)).getBytes(StandardCharsets.UTF_8);
+            s.send(new DatagramPacket(b, b.length, InetAddress.getByName(ip), 45692));
+        } catch (Throwable ignored) { }
     }
 
     private boolean bind() {
@@ -207,7 +287,7 @@ public final class RxEngine {
         if (len < H) return;
         if (d[off] != 0x50 || d[off + 1] != 0x4A) return;      // magic 'P','J'
         int type = d[off + 2] & 0xFF;
-        if (type != T_VIDEO && type != T_META && type != T_AUDIO) return;
+        if (type != T_VIDEO && type != T_META && type != T_AUDIO && type != T_CTRL) return;
         long seq = u32(d, off + 4);
         long tslo = u32(d, off + 8);
         int flags = d[off + 12] & 0xFF;
@@ -218,7 +298,40 @@ public final class RxEngine {
         byte[] payload = Arrays.copyOfRange(d, off + H, off + H + plen);
         if (type == T_VIDEO) stepVideo(seq, tslo, flags, kind, payload);
         else if (type == T_META) stepMeta(seq, tslo, flags, payload);
+        else if (type == T_CTRL) stepCtrl(payload);
         else stepAudio(seq, flags, payload);
+    }
+
+    /** Control packet (CTRL): "bye" = sender stopped casting; drop the decoder right away so
+     *  the TV leaves the frozen frame immediately instead of waiting for the idle timeout. */
+    private void stepCtrl(byte[] payload) {
+        String s = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
+        if (s.startsWith("p")) { sendPong(payload); return; }
+        if (s.startsWith("hi")) {
+            pipe.sendEmptyMessage(MSG_CTRL_HELLO);   // 日志放在 pipe 线程，去重后只打一条
+            return;
+        }
+        if (s.startsWith("hn")) {
+            String rest = s.substring(2).trim();
+            String nm = rest, pt = "";
+            int tab = rest.indexOf('\t');
+            if (tab > 0) { nm = rest.substring(0, tab).trim(); pt = rest.substring(tab + 1).trim(); }
+            if (!nm.isEmpty() && (!nm.equals(pcName) || !pt.equals(pcPort))) {
+                pcName = nm; pcPort = pt; postStatus();
+            }
+            return;
+        }
+        if (s.startsWith("lk") || s.startsWith("ul") || s.startsWith("sw")) {
+            final String ev = s.substring(0, 2);
+            main.post(new Runnable() {
+                @Override public void run() { sink.onEvent(ev); }
+            });
+            return;
+        }
+        if (!s.startsWith("bye")) return;
+        Log.i(TAG, "sender said bye -> release codec");
+        Logx.i("sender disconnected (bye)");
+        pipe.sendEmptyMessage(MSG_CTRL_BYE);
     }
 
     /** Video packet -> access-unit reassembly keyed on ts_us. rx thread only.
@@ -228,6 +341,12 @@ public final class RxEngine {
      *  a buffer is open simply appends (it does not restart it). This also covers the
      *  plain AU-level FIRST..LAST-last-packet semantics. */
     private void stepVideo(long seq, long tslo, int flags, int kind, byte[] payload) {
+        // 独立丢包统计：同一序号的双发包 delta=0 不算丢，超过 1000 的跳跃视为重置忽略
+        if (lastSeenVSeq >= 0) {
+            long d = seq - lastSeenVSeq;
+            if (d > 1 && d < 1000) lostPkts += d - 1;
+        }
+        lastSeenVSeq = seq;
         boolean first = (flags & F_FIRST) != 0, last = (flags & F_LAST) != 0;
         Asm a = vAsm;
         // LAST terminates each NAL, NOT the AU: the sender emits every NAL of a frame as
@@ -309,6 +428,17 @@ public final class RxEngine {
 
     /** meta frame payload: [ts_hi u16][SPS/PPS Annex-B]; chunks reassembled by FIRST/LAST. */
     private void stepMeta(long seq, long tslo, int flags, byte[] payload) {
+        // Sender restart detection: pjs.h restarts mseq at 1, so the video assembler's
+        // lastSeq (large) makes every new packet look like a duplicate (delta <= 0) and
+        // the picture freezes until the app is restarted. Reset on a backwards mseq and
+        // force a decoder reconfigure; the sender's first AU after restart is an IDR.
+        if (lastMetaSeq > 0 && seq < lastMetaSeq && lastMetaSeq - seq > 1000) {
+            lastMetaSeq = seq;
+            asmReset = true;                       // rx loop resets assemblers + aLastSeq
+            pipe.sendEmptyMessage(MSG_ERR);        // release codec -> reconfig on next SPS/IDR
+            return;                                // drop this stale packet
+        }
+        lastMetaSeq = seq;
         Asm a = mAsm;
         boolean first = (flags & F_FIRST) != 0, last = (flags & F_LAST) != 0;
         if (a.tracked) {
@@ -393,7 +523,9 @@ public final class RxEngine {
         // via META; feeding slices is all the decoder needs.
         if (!hasNal(au, 1) && !hasNal(au, 5)) return;
         if (waitingIdr && idr) waitingIdr = false;         // first usable frame found
-        pipe.obtainMessage(MSG_FRAME, new Frame(au, ts, idr)).sendToTarget();
+        Message fm = pipe.obtainMessage(MSG_FRAME, new Frame(au, ts, idr));
+        if (AV_SYNC_MS > 0) pipe.sendMessageDelayed(fm, AV_SYNC_MS);   // 音画同步：视频整体推迟
+        else fm.sendToTarget();
     }
 
     private void onPipe(Message m) {
@@ -441,8 +573,35 @@ public final class RxEngine {
             }
             case MSG_ERR:
                 Log.w(TAG, "MSG_ERR: releasing codec for reconfig");
+                Logx.w("releasing codec for reconfig");
                 releaseCodec();
                 break;
+            case MSG_CTRL_HELLO: {
+            emitEvent("hi");
+                // 新会话：复位重组器（旧会话的 seq 全部作废）+ 重建解码器，等下一个 IDR
+                long nowMs = SystemClock.elapsedRealtime();
+                if (nowMs - lastHelloMs < 1500) break;   // 发送端连发 3 个 hello，只处理第一个
+                lastHelloMs = nowMs;
+                Log.i(TAG, "sender hello -> reset + reconfig");
+                Logx.i("sender connected (hello)");
+                asmReset = true;
+                lastMetaSeq = -1;
+                releaseCodec();
+                waitingIdr = true;
+                postStatus();
+                break;
+            }
+            case MSG_CTRL_BYE: {
+                emitEvent("bye");
+                // 投屏端点了「停止投屏」：先保留最后一张画面（电视端显示断线提示条），
+                // 3.5 秒后再释放解码器，避免立刻黑屏。
+                peer = "-";
+                lastRxMs = 0;
+                framesFed.set(0);                                  // 状态立刻变 "listening"
+                freezeUntil = SystemClock.elapsedRealtime() + 3500; // 这段时间内不要掉解码器
+                postStatus();
+                break;
+            }
             case MSG_TICK:
                 tick();
                 break;
@@ -463,6 +622,7 @@ public final class RxEngine {
                 b.put(f.au);
                 c.queueInputBuffer(idx, 0, f.au.length, f.ts, 0);
                 framesFed.incrementAndGet();
+            lastFrameWall = System.currentTimeMillis();
             } catch (Throwable e) {
                 Log.w(TAG, "feed failed len=" + f.au.length, e);
                 pipe.sendEmptyMessage(MSG_ERR);
@@ -510,13 +670,28 @@ public final class RxEngine {
                     @Override public void onOutputBufferAvailable(MediaCodec mc, int index,
                                                                   MediaCodec.BufferInfo info) {
                         try {
-                            mc.releaseOutputBuffer(index, true); // render now, no PTS pacing (M2)
+                            // 上屏节拍调度：立即上屏时，输入(≈60fps)与面板 vsync 相位漂移，
+                            // 每几百毫秒会出现一次「重复帧/跳帧」，鼠标看着轻微一顿。
+                            // 改成固定节拍槽位（每 16.67ms 一格）后上屏间隔恒定。
+                            // 代价：整幅画面（含鼠标）平均晚约 8ms、最坏 16.7ms。
+                            if (RENDER_PACE_NS <= 0) {
+                                mc.releaseOutputBuffer(index, true);
+                            } else {
+                                long now = System.nanoTime();
+                                if (nextRenderNs == 0 || nextRenderNs < now - 2 * RENDER_PACE_NS) {
+                                    nextRenderNs = now + PACE_LEAD_NS;      // 首帧/断流/落后过多：重锚
+                                }
+                                long ns = nextRenderNs;
+                                nextRenderNs += RENDER_PACE_NS;
+                                mc.releaseOutputBuffer(index, Math.max(ns, now));
+                            }
                         } catch (Throwable e) {
                             pipe.sendEmptyMessage(MSG_ERR);
                         }
                     }
                     @Override public void onError(MediaCodec mc, MediaCodec.CodecException e) {
                         Log.w(TAG, "codec error", e);
+                        Logx.e("codec error: " + e);
                         pipe.sendEmptyMessage(MSG_ERR);
                     }
                     @Override public void onOutputFormatChanged(MediaCodec mc, MediaFormat format) {
@@ -556,6 +731,7 @@ public final class RxEngine {
         framesFed.set(0);
         prevFrames = 0;
         fps = 0;
+        nextRenderNs = 0;                                       // 解码器重配后节拍要重锚
         asmReset = true;                                       // rx resets assemblers next packet
         postStatus();
     }
@@ -600,6 +776,7 @@ public final class RxEngine {
                     AudioFormat.ENCODING_PCM_16BIT, min + min / 2, AudioTrack.MODE_STREAM);
             t.play();
             acodec = c; atrack = t; aRate = rate; aCh = ch;
+            aWrittenBytes = 0;
         } catch (Throwable e) {
             releaseAudio();
         }
@@ -630,7 +807,8 @@ public final class RxEngine {
                         byte[] pcm = new byte[bi.size];
                         ob.position(bi.offset);
                         ob.get(pcm, 0, bi.size);
-                        atrack.write(pcm, 0, bi.size);
+                        int w = atrack.write(pcm, 0, bi.size);
+                        if (w > 0) aWrittenBytes += w;
                     }
                 }
                 acodec.releaseOutputBuffer(oi, false);
@@ -643,7 +821,7 @@ public final class RxEngine {
 
     private void releaseAudio() {
         AudioTrack t = atrack; atrack = null;
-        MediaCodec c = acodec; acodec = null;
+        aWrittenBytes = 0;        MediaCodec c = acodec; acodec = null;
         aRate = 0; aCh = 0;
         if (t != null) {
             try { t.stop(); } catch (Throwable ignored) { }
@@ -655,13 +833,75 @@ public final class RxEngine {
         }
     }
 
+    /** 已写入但还没播出的 PCM 毫秒数（= AudioTrack 缓冲延迟）。 */
+    private int audioBufferedMs() {
+        AudioTrack t = atrack;
+        int rate = aRate, ch = aCh;
+        if (t == null || rate <= 0 || ch <= 0) return -1;
+        try {
+            long playedFrames = t.getPlaybackHeadPosition() & 0xFFFFFFFFL;
+            long queued = aWrittenBytes - playedFrames * ch * 2L;
+            if (queued < 0) queued = 0;
+            return (int) (queued * 1000L / ((long) rate * ch * 2L));
+        } catch (Throwable e) {
+            return -1;
+        }
+    }
+
+    /** AudioTrack 估计的硬件输出延迟（毫秒）。getLatency() 在新 SDK 不可用，改用时间戳估算。 */
+    private int audioOutputLatencyMs() {
+        AudioTrack t = atrack;
+        int rate = aRate;
+        if (t == null || rate <= 0) return -1;
+        try {
+            android.media.AudioTimestamp ts = new android.media.AudioTimestamp();
+            if (t.getTimestamp(ts)) {
+                long played = t.getPlaybackHeadPosition() & 0xFFFFFFFFL;
+                long framesAhead = played - ts.framePosition;
+                if (framesAhead < 0) framesAhead = 0;
+                return (int) (framesAhead * 1000L / rate);
+            }
+        } catch (Throwable ignored) { }
+        return -1;
+    }
+
+    /** 兜底：心跳还在但 3 秒没有画面（PC 锁屏/捕获暂停/编码卡住）→ 让电视显示暂停遮罩。 */
+    private void checkPauseFallback() {
+        long now = System.currentTimeMillis();
+        boolean alive = lastRxWall > 0 && (now - lastRxWall) < 3000;
+        boolean stalled = alive && framesFed.get() > 0 && lastFrameWall > 0 && (now - lastFrameWall) > 3000;
+        if (stalled && !pauseShown) {
+            pauseShown = true;
+            final String ev = "pz";
+            main.post(new Runnable() { @Override public void run() { sink.onEvent(ev); } });
+        } else if (!stalled && pauseShown) {
+            pauseShown = false;
+            final String ev = "rs";
+            main.post(new Runnable() { @Override public void run() { sink.onEvent(ev); } });
+        }
+    }
+
     private void tick() {
+        checkPauseFallback();
         long n = framesFed.get();
         fps = n - prevFrames;                                  // 1s cadence
         prevFrames = n;
+        if (Logx.isEnabled() && (++tickN % 5) == 0) {
+            Logx.i("stat fps=" + fps + " fed=" + framesFed.get() + " lost=" + lostSeq.get()
+                    + " dropAu=" + droppedAu.get() + " idr=" + fedIdr.get()
+                    + " aud=" + audioFed.get() + " adrop=" + audioDrop.get()
+                + " host=" + (pcName.isEmpty() ? "-" : pcName)
+                + " pport=" + (pcPort.isEmpty() ? "-" : pcPort)
+                    + " res=" + (width > 0 ? width + "x" + height : "-"));
+        }
         boolean streaming = lastRxMs != 0
                 && SystemClock.elapsedRealtime() - lastRxMs < IDLE_MS;
-        if (!streaming && configured) releaseCodec();          // 30s silence -> listening
+        // 空闲超时释放解码器；但「主动断开」后要留 3.5 秒冻结最后一帧。
+        // 冻结期结束后把 peer 也清掉，否则电视端会一直显示"正在连接…"（源设备已经关掉了）。
+        if (!streaming && SystemClock.elapsedRealtime() > freezeUntil) {
+            if (configured) releaseCodec();
+            if (peer != null && !peer.equals("-")) { peer = "-"; postStatus(); }
+        }
         Handler h = audh;                                      // audio idles independently
         if (h != null && lastAudioMs != 0
                 && SystemClock.elapsedRealtime() - lastAudioMs > IDLE_MS) {
@@ -674,6 +914,11 @@ public final class RxEngine {
     }
 
     // ---------------- status line ----------------
+
+    /** 向界面投递一次性事件（lk/ul/sw/pz/rs/hi/bye）。 */
+    private void emitEvent(final String ev) {
+        main.post(new Runnable() { @Override public void run() { sink.onEvent(ev); } });
+    }
 
     private void postStatus() {
         final String text = buildStatus();
@@ -689,7 +934,10 @@ public final class RxEngine {
                 + " idr=" + fedIdr.get()
                 + " meta=" + metaCount.get() + " res=" + res
                 + " aud=" + audioFed.get() + " adrop=" + audioDrop.get()
-                + (waitingIdr ? " waitIDR" : "");
+                + " host=" + (pcName.isEmpty() ? "-" : pcName)
+                + " pport=" + (pcPort.isEmpty() ? "-" : pcPort)
+                + (waitingIdr ? " waitIDR" : "")
+                + (Logx.isEnabled() ? " LOG" : "");
         if (fed == 0) return "listening  udp:" + PORT + "  pc=" + peer + "\n" + tail;
         return "READY pc=" + peer + " fps=" + String.format(Locale.US, "%.1f", fps)
                 + "  fed=" + fed + "\nudp:" + PORT + " " + tail;
