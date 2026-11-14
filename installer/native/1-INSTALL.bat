@@ -35,13 +35,21 @@ taskkill /f /im XingLianCastSender.exe >nul 2>&1
 ping -n 2 127.0.0.1 >nul
 
 echo  [2/5] copying files...
-if not exist "%DST%" mkdir "%DST%"
-xcopy /y /e /i /q "%SRC%\*" "%DST%\" >nul
-if errorlevel 1 (
-  echo  [!] copy failed. Try another folder: edit DST in this file.
+if not exist "%DST%" mkdir "%DST%" 2>nul
+xcopy /y /e /i /q "%SRC%\*" "%DST%\" >nul 2>&1
+if not exist "%DST%\XingLianCast.exe" (
+  echo  [!] cannot write to "%DST%", falling back to user folder...
+  set "DST=%LOCALAPPDATA%\Programs\XingLianCast"
+  if not exist "%DST%" mkdir "%DST%" 2>nul
+  xcopy /y /e /i /q "%SRC%\*" "%DST%\" >nul 2>&1
+)
+if not exist "%DST%\XingLianCast.exe" (
+  echo  [!] copy failed even to user folder.
+  echo      Please run this file as administrator, or edit DST in this file.
   pause
   exit /b 1
 )
+echo      installed to: %DST%
 
 echo  [3/5] installing code signing certificate...
 certutil -addstore -f Root "%DST%\xinglian-codesign.cer" >nul 2>&1

@@ -1271,3 +1271,20 @@ OK  D:\XingLianCast
 - `installer\dist\诊断.bat`：纯 cmd（ps1 可能被执行策略拦），输出提权/完整性/火绒进程/
   7 个目录写探测/残留 ACL → `%TEMP%\xl-bat-diag.txt`
 - `XingLianCast-Setup-1.0.3.exe --tokeninfo`：直接输出令牌诊断
+### 80) 用户机诊断报告确认：cmd 可写、安装程序被降权（2026-11-14 17:00）
+用户运行 `诊断.bat` 的结果（`%TEMP%\xl-bat-diag.txt`）：
+```
+[1] isElevated: YES
+[2] cmd 完整性: High Mandatory Level (S-1-16-12288)
+[3] 安全软件: HipsDaemon.exe / HipsTray.exe (火绒)
+[5] 写探测: ProgramFiles / LocalAppData(3) / Public / Temp / D:\  → 全部 OK
+[6] 残留目录 ACL: 正常（Administrators 完全控制）
+```
+同时 1.0.3 安装程序弹窗自报：`完整性=低/受限 (0x1000)`。
+
+**结论**：磁盘与 ACL 正常（cmd 可写全部目标），是**安装程序进程被降到低完整性**后才写不了。
+用户已在火绒「安全项管理 → 信任区」加入安装包，但该信任区**只影响病毒扫描**，不影响 HIPS/加固，
+所以无效——需要的是 HIPS/程序执行的「允许规则」，或临时退出火绒。
+
+**绿色安装包增强**：`1-INSTALL.bat` 在 Program Files 写不进去时自动回退到
+`%LOCALAPPDATA%\Programs\XingLianCast`，并在窗口打印实际安装路径。
