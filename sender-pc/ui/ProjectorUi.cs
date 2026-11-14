@@ -2466,7 +2466,16 @@ class LogoBox : Panel
             if (_switchedNotice) { sb.Append("--switched "); _switchedNotice = false; }
 
             var dev = _cboDevice.SelectedItem as Discovery.Device;
-            if (dev != null) sb.Append("--ip ").Append(dev.Ip).Append(" --port ").Append(dev.Port);
+            if (dev != null)
+            {
+                // 信标里的 IP/端口来自局域网，必须校验后再拼命令行（旧版不加引号，可被注入额外参数）
+                string ip = dev.Ip ?? "";
+                System.Net.IPAddress parsed;
+                if (System.Net.IPAddress.TryParse(ip, out parsed))
+                    sb.Append("--ip \"").Append(ip).Append("\" --port ").Append(dev.Port);
+                else
+                    Log("忽略非法信标 IP: " + ip);
+            }
             return sb.ToString().Trim();
         }
 
@@ -2538,6 +2547,24 @@ class LogoBox : Panel
                             UpdateButtons();
                             RefreshLicenseBadge();
                             OpenLicenseDialog();
+                            return;
+                        }
+                        if (exitCode == 6)
+                        {
+                            // 采集/纹理初始化失败（显卡驱动不支持桌面复制等），不是授权问题
+                            _wantCast = false;
+                            StopTrialClock();
+                            SetState("启动失败", 3);
+                            ResetMetrics();
+                            UpdateButtons();
+                            MessageBox.Show(this,
+                                "无法初始化屏幕采集。\n\n" +
+                                "常见原因：\n" +
+                                "  · 显卡驱动过旧或不支持桌面复制（Desktop Duplication）\n" +
+                                "  · 正在远程桌面/虚拟机里运行\n" +
+                                "  · 显卡内存不足\n\n" +
+                                "建议更新显卡驱动后重试；如仍失败，请把日志发回排查。",
+                                "星联投屏 · 采集初始化失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                             return;
                         }
                         SetState("已停止", 0);

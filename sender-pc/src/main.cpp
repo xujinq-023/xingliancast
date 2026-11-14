@@ -316,7 +316,16 @@ int main(int argc, char** argv) {
     std::string codeOverride;
     for (int i = 1; i + 1 < argc; i++)
       if (std::string(argv[i]) == "--license") codeOverride = argv[i + 1];
-    if (!codeOverride.empty()) lic::store_write("license.dat", codeOverride);
+    if (!codeOverride.empty()) {
+      // 只写入「验签通过」的码：旧版无条件 store_write，任何来源（含伪造信标注入的命令行）
+      // 都能用垃圾码覆盖用户已生效的授权文件，表现为"昨天还能用今天变未注册"。
+      std::string why; bool perm = false;
+      if (lic::verify(codeOverride, why, perm)) {
+        lic::store_write("license.dat", codeOverride);
+      } else {
+        fprintf(stderr, "IGNORED_LICENSE: %s\n", why.c_str());
+      }
+    }
 
     int rc = lic::check_start(licMsg, licensed);
     if (rc != 0) {
@@ -443,7 +452,7 @@ int main(int argc, char** argv) {
     };
     if (useDDA) {
       HRESULT hd = initDDA();
-      if (FAILED(hd)) { Logf("DuplicateOutput 失败 0x%08lx\n", hd); return 3; }
+      if (FAILED(hd)) { Logf("DuplicateOutput 失败 0x%08lx\n", hd); fprintf(stderr, "CAPTURE_INIT_FAILED 0x%08lx\n", (unsigned long)hd); return 6; }
     }
     // DDA 纹理是物理像素；rcMonitor 是 DPI 逻辑值（125% 缩放下会小 1/4），用 DEVMODE 取真实尺寸
     DEVMODEW dm{}; dm.dmSize = sizeof(dm);
@@ -562,7 +571,7 @@ int main(int argc, char** argv) {
     stdesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ComPtr<ID3D11Texture2D> staging;
     HRESULT hr2 = dev->CreateTexture2D(&stdesc, nullptr, &staging);
-    if (FAILED(hr2)) { fprintf(stderr, "staging hr=0x%08lx\n", hr2); return 3; }
+    if (FAILED(hr2)) { fprintf(stderr, "CAPTURE_INIT_FAILED staging 0x%08lx\n", (unsigned long)hr2); return 6; }
     std::vector<uint8_t> yuv((size_t)ew * eh * 3 / 2);  // CPU 转出的 packed NV12（行距=ew）
 
     // ---------- device manager + 编码器（与 VP 纹理同一设备，硬编可零拷贝吃纹理） ----------

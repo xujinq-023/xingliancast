@@ -112,6 +112,8 @@ public final class RxEngine {
     private long aLastSeq = -1;                        // rx-thread only
     private volatile long lastAudioMs;
     private volatile long lastFrameWall;     // 最近一次真正解出帧的墙上时间
+    private volatile String closedIp;        // 刚发过 bye 的电脑 IP
+    private volatile long closedUntil;       // 这段时间内忽略它的残留包（否则会把「会话热」重新点亮，挡住下一台）
     private volatile boolean pauseShown;     // 已提示"画面已暂停"
     private volatile long lastRxWall;        // 最近一次收到「当前会话」的包（占线判断用）
     private static final long BUSY_WINDOW_MS = 5000;   // 超过 5 秒没包视为空闲，允许他人接管
@@ -322,6 +324,7 @@ public final class RxEngine {
             long nowW = SystemClock.elapsedRealtime();
             InetAddress src = got.getAddress();
             String srcIp = src == null ? "?" : src.getHostAddress();
+            if (closedIp != null && srcIp.equals(closedIp) && nowW < closedUntil) continue;   // 已关闭会话的残留包：忽略
             String cur = peer;
             boolean hasSession = cur != null && !cur.equals("-") && !cur.equals("?");
             long nowMs2 = System.currentTimeMillis();
@@ -331,11 +334,16 @@ public final class RxEngine {
                                       || (lastFrameWall > 0 && (nowMs2 - lastFrameWall) < 3000));
             if (hot && !srcIp.equals(cur)) {
                 // 已有电脑在投屏：后来者一律拒绝，且不切换会话（先连的优先）
-                refuse(src, srcIp, nowW, "peer=" + cur + " rxWall=" + (nowW - lastRxWall) + "ms frameWall=" + (nowMs2 - lastFrameWall) + "ms");
+                refuse(src, srcIp, nowW, "peer=" + cur + " rxWall=" + (nowW - lastRxWall) + "ms frameWall=" + (lastFrameWall > 0 ? (nowMs2 - lastFrameWall) : -1) + "ms");
                 continue;
             }
             lastRxMs = nowW;
-            if (!srcIp.equals(cur)) Logx.i("accept new peer " + srcIp + " (prev=" + cur + ")");
+            if (!srcIp.equals(cur)) {
+                // 换了一台电脑：它的 seq 从 1 重新开始，必须作废旧会话的重组状态，
+                // 否则新机的帧全被判为 delta<=0 重复包丢弃（实测：A 停止后 B 连入 → 画面永久冻结）。
+                Logx.i("accept new peer " + srcIp + " (prev=" + cur + ") -> reset assembler");
+                asmReset = true;
+            }
             peer = srcIp;
             lastRxWall = nowW;
             if (asmReset) { asmReset = false; vAsm.reset(); mAsm.reset(); aLastSeq = -1; }
@@ -671,8 +679,12 @@ public final class RxEngine {
                 emitEvent("bye");
                 // 投屏端点了「停止投屏」：先保留最后一张画面（电视端显示断线提示条），
                 // 3.5 秒后再释放解码器，避免立刻黑屏。
+                closedIp = peer;                                   // 记住这台：3 秒内忽略它的残留包
+                closedUntil = SystemClock.elapsedRealtime() + 3000;
                 peer = "-";
                 lastRxMs = 0;
+                lastRxWall = 0;                                    // 清「会话热」判据：否则 5 秒内新电脑会被误判为第二台而拒绝
+                lastFrameWall = 0;                                 // 会话已结束：下一台的 hello 必须被接受
                 framesFed.set(0);                                  // 状态立刻变 "listening"
                 freezeUntil = SystemClock.elapsedRealtime() + 3500; // 这段时间内不要掉解码器
                 postStatus();
@@ -961,6 +973,7 @@ public final class RxEngine {
         checkPauseFallback();
         long n = framesFed.get();
         fps = n - prevFrames;                                  // 1s cadence
+        if (fps < 0) fps = 0;                                  // bye 时 framesFed 归零会算出负值
         prevFrames = n;
         if (Logx.isEnabled() && (++tickN % 5) == 0) {
             Logx.i("stat fps=" + fps + " fed=" + framesFed.get() + " lost=" + lostSeq.get()
@@ -976,7 +989,7 @@ public final class RxEngine {
         // 冻结期结束后把 peer 也清掉，否则电视端会一直显示"正在连接…"（源设备已经关掉了）。
         if (!streaming && SystemClock.elapsedRealtime() > freezeUntil) {
             if (configured) releaseCodec();
-            if (peer != null && !peer.equals("-")) { peer = "-"; postStatus(); }
+            if (peer != null && !peer.equals("-")) { peer = "-"; lastRxWall = 0; postStatus(); }
         }
         Handler h = audh;                                      // audio idles independently
         if (h != null && lastAudioMs != 0

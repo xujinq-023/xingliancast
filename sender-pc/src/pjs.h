@@ -75,12 +75,17 @@ class UdpOut {
   bool open(const char* ip, int port) {
     WSADATA w; if (WSAStartup(0x202, &w)) return false;
     s_ = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s_ == INVALID_SOCKET) return false;
     // 每帧突发可达上百个包（IDR 更大），Windows UDP 默认发送缓冲只有 64KB，
     // 缓冲耗尽时 sendto 返回 WSAENOBUFS 并静默丢包 → WiFi 端看到成片丢包。
     int snd = 4 << 20;
     ::setsockopt(s_, SOL_SOCKET, SO_SNDBUF, (const char*)&snd, sizeof snd);
     memset(&to_, 0, sizeof(to_)); to_.sin_family = AF_INET; to_.sin_port = htons((u_short)port);
-    inet_pton(AF_INET, ip, &to_.sin_addr); return s_ != INVALID_SOCKET;
+    // 非法 IP 必须失败：旧版忽略 inet_pton 返回值，会把包发到 0.0.0.0 却"打开成功"
+    if (inet_pton(AF_INET, ip, &to_.sin_addr) != 1) {
+      ::closesocket(s_); s_ = INVALID_SOCKET; return false;
+    }
+    return true;
   }
   void send_raw(const std::vector<uint8_t>& b) {
     if (::sendto(s_, (const char*)b.data(), (int)b.size(), 0, (sockaddr*)&to_, sizeof(to_)) == SOCKET_ERROR)
