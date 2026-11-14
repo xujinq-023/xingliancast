@@ -1288,3 +1288,23 @@ OK  D:\XingLianCast
 
 **绿色安装包增强**：`1-INSTALL.bat` 在 Program Files 写不进去时自动回退到
 `%LOCALAPPDATA%\Programs\XingLianCast`，并在窗口打印实际安装路径。
+### 81) 真因修正：不是用户机器的问题，是我的沙箱 + 自我提权（2026-11-14 17:10，v1.0.4）
+**关键证据（本机实测）**
+| 进程 | 完整性 |
+|---|---|
+| explorer.exe | HIGH |
+| 用户自己启动的 app（qianwen 等） | HIGH |
+| **DeepSeek Harness（我）** | **LOW (0x1000)** |
+因此**我启动的所有子进程都是 LOW**：notepad / cmd / 安装程序 / 探针全部 0x1000。
+用户的 `诊断.bat`（他自己运行）显示 cmd=High、7 个目录全部可写 → **他的机器本身没有问题**。
+此前那份 `ilcheck-result.txt` 是我在沙箱里跑出来的（文件时间 17:02），不代表他的环境。
+
+**另一个真实隐患：自我提权**
+旧安装程序用 `ShellExecute(Verb=runas)` 重新拉起自己。在 Windows 11 26300（含「管理员保护」）上，
+这条路可能得到**受限/低完整性令牌**（仍显示"管理员=是"，但 IL=0x1000），于是所有目录都写不进去。
+
+**修复（1.0.4）**
+- 新增 `installer\setup\app.manifest`：`requestedExecutionLevel level="requireAdministrator"`
+  （+ perMonitorV2 DPI、supportedOS），编译时 `/win32manifest:app.manifest`
+- 移除自我 `runas` 重启；若未提权只提示「请右键以管理员身份运行」并退出(7)
+- 校验：exe 内已嵌入 `requireAdministrator`，签名 Valid，版本 1.0.4.0
