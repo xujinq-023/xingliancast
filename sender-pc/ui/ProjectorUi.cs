@@ -41,6 +41,22 @@ namespace ProjectorUi
                 try { Console.WriteLine(msg); } catch { }
                 return;
             }
+            if (args != null && args.Length >= 1 && args[0].Equals("--license-ui", StringComparison.OrdinalIgnoreCase))
+            {
+                UIFont.Init();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                using (var dlg = new LicenseForm()) dlg.ShowDialog();
+                return;
+            }
+            if (args != null && args.Length >= 1 && args[0].Equals("--about", StringComparison.OrdinalIgnoreCase))
+            {
+                UIFont.Init();
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                using (var dlg = new AboutForm()) dlg.ShowDialog();
+                return;
+            }
             if (args != null && args.Length >= 1 && args[0].Equals("--diag", StringComparison.OrdinalIgnoreCase))
             {
                 var sb = new StringBuilder();
@@ -756,7 +772,7 @@ namespace ProjectorUi
             Text = "正版注册";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterParent;
-            ClientSize = T.Sz(440, 340);
+            ClientSize = T.Sz(440, 392);
             BackColor = T.Card;
             AutoScaleMode = AutoScaleMode.None;
             ShowInTaskbar = false;
@@ -847,9 +863,23 @@ namespace ProjectorUi
             _key.Size = T.Sz(392, 76);
             Controls.Add(_key);
 
+            var buy = new Label2();
+            buy.Text = "购买授权：xujinq@hotmail.com　·　+86 13996351705\n" +
+                       "10 元/年　·　20 元终生　　点击此处复制联系方式";
+            buy.Font = T.F(11);
+            buy.ForeColor = T.Sub;
+            buy.Location = T.Pt(24, 274);
+            buy.Size = T.Sz(392, 46);
+            buy.Cursor = Cursors.Hand;
+            buy.Click += delegate
+            {
+                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); buy.Text = "联系方式已复制到剪贴板"; }
+                catch { }
+            };
+            Controls.Add(buy);
             var btnOk = new AccentButton();
             btnOk.Text = "注册";
-            btnOk.Location = T.Pt(300, 284);
+            btnOk.Location = T.Pt(300, 336);
             btnOk.Size = T.Sz(116, 34);
             btnOk.Click += delegate
             {
@@ -873,7 +903,7 @@ namespace ProjectorUi
 
             var btnClose = new FlatButton();
             btnClose.Text = "关闭";
-            btnClose.Location = T.Pt(24, 284);
+            btnClose.Location = T.Pt(24, 336);
             btnClose.Size = T.Sz(96, 34);
             btnClose.Fill = T.Card2; btnClose.FillHover = T.Border; btnClose.TextColor = T.Sub;
             btnClose.Click += delegate { Close(); };
@@ -1163,9 +1193,10 @@ class LogoBox : Panel
 
         public AboutForm()
         {
+            Text = "关于 星联投屏";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterParent;
-            ClientSize = T.Sz(400, 268);
+            ClientSize = T.Sz(420, 380);
             BackColor = T.Card;
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.None;
@@ -1184,34 +1215,62 @@ class LogoBox : Panel
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
-            ver.Size = T.Sz(280, 20);
+            ver.Size = T.Sz(320, 20);
 
             var body = new Label2();
-            body.Text = "引擎  sender.exe\n传输  UDP 45690（视频/音频）\n发现  UDP 45691 · 回传 45692\n字体  Noto Sans SC 子集（SIL OFL 1.1）";
-            body.Font = T.F(12.5f);
+            body.Text = "引擎  sender.exe\n" +
+                        "传输  UDP 45690（视频/音频）\n" +
+                        "发现  UDP 45691 · 回传 45692\n" +
+                        "字体  Noto Sans SC 子集（SIL OFL 1.1，全文见 OFL.txt）";
+            body.Font = T.F(12);
             body.ForeColor = T.Text;
-            body.Location = T.Pt(22, 96);
-            body.Size = T.Sz(356, 100);
+            body.Location = T.Pt(22, 92);
+            body.Size = T.Sz(376, 92);
+
+            // ---- 联系我们 ----
+            var contactCap = new Label2();
+            contactCap.Text = "联系我们";
+            contactCap.Font = T.F(12.5f, true);
+            contactCap.ForeColor = T.Text;
+            contactCap.Location = T.Pt(22, 192);
+            contactCap.Size = T.Sz(200, 20);
+
+            var contact = new Label2();
+            contact.Text = "E-Mail   xujinq@hotmail.com\n" +
+                           "Mobile   +86 13996351705";
+            contact.Font = T.F(12.5f);
+            contact.ForeColor = T.Accent;
+            contact.Location = T.Pt(22, 216);
+            contact.Size = T.Sz(376, 44);
+            contact.Cursor = Cursors.Hand;
+            contact.Click += delegate
+            {
+                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); } catch { }
+            };
+
+            var price = new Label2();
+            price.Text = "版权费用：10 元/年　·　20 元终生\n" +
+                         "版权所有，请通过 E-Mail 或电话购买授权";
+            price.Font = T.F(12);
+            price.ForeColor = T.Sub;
+            price.Location = T.Pt(22, 262);
+            price.Size = T.Sz(376, 44);
 
             var ok = new FlatButton();
             ok.Text = "确定";
             ok.Size = T.Sz(96, 36);
-            ok.Location = T.Pt(400 - 96 - 20, 268 - 36 - 18);
+            ok.Location = T.Pt(420 - 96 - 22, 380 - 36 - 18);
             ok.Fill = T.Accent; ok.FillHover = T.AccentHi; ok.TextColor = Color.White;
             ok.Click += delegate { Close(); };
 
-            var lic = new FlatButton();
-            lic.Text = "字体许可";
-            lic.Size = T.Sz(96, 36);
-            lic.Location = T.Pt(400 - 96 - 20 - 106, 268 - 36 - 18);
-            lic.Fill = T.Card2; lic.FillHover = T.Hover; lic.TextColor = T.Text;
-            lic.Click += delegate
+            var copy = new FlatButton();
+            copy.Text = "复制联系方式";
+            copy.Size = T.Sz(120, 36);
+            copy.Location = T.Pt(420 - 96 - 22 - 132, 380 - 36 - 18);
+            copy.Fill = T.Card2; copy.FillHover = T.Hover; copy.TextColor = T.Text;
+            copy.Click += delegate
             {
-                try
-                {
-                    string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OFL.txt");
-                    if (File.Exists(p)) Process.Start("notepad.exe", "\"" + p + "\"");
-                }
+                try { Clipboard.SetText("xujinq@hotmail.com  /  +86 13996351705"); copy.Text = "已复制"; }
                 catch { }
             };
 
@@ -1219,7 +1278,10 @@ class LogoBox : Panel
             Controls.Add(name);
             Controls.Add(ver);
             Controls.Add(body);
-            Controls.Add(lic);
+            Controls.Add(contactCap);
+            Controls.Add(contact);
+            Controls.Add(price);
+            Controls.Add(copy);
             Controls.Add(ok);
 
             MouseDown += DragIt;
@@ -1233,6 +1295,8 @@ class LogoBox : Panel
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 using (var p = new Pen(T.Border)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+                using (var pen = new Pen(T.Hairline))
+                    e.Graphics.DrawLine(pen, T.I(20), T.I(184), Width - T.I(20), T.I(184));
             };
         }
 
