@@ -232,6 +232,7 @@ static Cfg ParseArgs(int argc, char** argv) {
 static int g_trialUsedSec = 0;
 static bool g_licensed = true;
 static bool g_tvBusy = false;      // 电视已被另一台电脑占用
+static bool g_tvLost = false;      // 电视端退出/关机（状态回传中断）
 
 // ---------- 编码器配置记忆 ----------
 // 某些 Intel QSV 驱动「创建成功但一帧不出」，探测要 2~3 秒；把上次可用的组合记下来，
@@ -915,6 +916,17 @@ auto tick = [&]() {
           g_stop = true;
         }
         lastSecFrames = (int)frames;
+        // 电视端退出/关机检测：本会话曾经收到过状态回传，若连续 5 秒收不到 → 判定已断开。
+        // 只看"曾经收到过"是因为老版本电视端可能不发回传，避免误判。
+        static bool fbSeen = false;
+        static uint64_t lastFbMs = 0;
+        if (fs.alive) { fbSeen = true; lastFbMs = now; }
+        else if (fbSeen && !g_tvLost && now - lastFbMs > 5000) {
+          g_tvLost = true;
+          Logf("[提示] 电视端已断开（超过 5 秒没有状态回传），停止投屏。");
+          fprintf(stderr, "TV_LOST\n");
+          g_stop = true;
+        }
         if (fs.alive && fs.lost > 0) needIdr = true;   // 电视报丢包：立刻补 IDR，避免长期黑屏
         if (fs.alive && fs.needIdr) needIdr = true;    // 电视在等关键帧（解码器刚重建）→ 立刻补
         char line[768];
@@ -1179,5 +1191,6 @@ auto tick = [&]() {
   }
   logx::Shutdown();
   if (g_tvBusy) return 5;          // 电视被另一台电脑占用
+  if (g_tvLost) return 7;          // 电视端退出/关机，状态回传中断
   return 0;
 }

@@ -1230,7 +1230,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.16  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.17  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2047,7 +2047,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.16  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.17  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2552,6 +2552,17 @@ class LogoBox : Panel
                             UpdateButtons();
                             RefreshLicenseBadge();
                             OpenLicenseDialog();
+                            return;
+                        }
+                        if (exitCode == 7)
+                        {
+                            // 电视端退出/关机：引擎已停止，界面提示并复位（不当作"未授权"或"设备忙"）
+                            if (_wantCast) _wantCast = false;
+                            StopTrialClock();
+                            SetState("电视端已断开", 3);
+                            ResetMetrics();
+                            UpdateButtons();
+                            Log("电视端已断开：接收端 App 退出或电视关机/断网");
                             return;
                         }
                         if (exitCode == 6)
