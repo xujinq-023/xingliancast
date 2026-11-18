@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.24  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.26  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1732,7 +1732,7 @@ class LogoBox : Panel
             grid.Height = T.I(44 * 4 + 72 + 128);
             grid.BackColor = Color.Transparent;
             grid.ColumnCount = 4;
-            grid.RowCount = 6;
+            grid.RowCount = 7;
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(72)));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(92)));
@@ -1740,6 +1740,7 @@ class LogoBox : Panel
             for (int i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(44)));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(72)));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(128)));  // 指标块（2 行）
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(17)));      // 功能区分隔线（1px 线 + 上下留白）
             EnableDoubleBuffer(grid);
             ctl.Controls.Add(grid);
 
@@ -1804,7 +1805,9 @@ class LogoBox : Panel
             btnRow.RowCount = 1;
             for (int ci = 0; ci < 5; ci++) btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
             btnRow.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(42)));
+            btnRow.MaximumSize = new Size(0, T.I(42));
             btnRow.Height = T.I(42);
+            btnRow.AutoSize = false;
             btnRow.Dock = DockStyle.Fill;
             
             EnableDoubleBuffer(btnRow);
@@ -1893,6 +1896,12 @@ class LogoBox : Panel
                 _mv[i] = card;
                 meters.Controls.Add(card, i % 5, i / 5);
             }
+            var sepLine = new Panel();
+            sepLine.Dock = DockStyle.Fill;
+            sepLine.BackColor = T.Border;
+            sepLine.Margin = T.Pad(0, 8, 0, 8);
+            grid.Controls.Add(sepLine, 0, 6);
+            grid.SetColumnSpan(sepLine, 4);
             grid.Controls.Add(meters, 0, 5);
             grid.SetColumnSpan(meters, 4);
             SetState("未连接", 0);
@@ -2083,7 +2092,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.24  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.26  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2164,9 +2173,20 @@ class LogoBox : Panel
         {
             if (_btnSmooth == null) return;
             _btnSmooth.Text = _smooth ? "流畅优先：开" : "流畅优先：关";
-            _btnSmooth.Fill = _smooth ? T.Card2 : T.Card2;
-            _btnSmooth.FillHover = T.Border;
-            _btnSmooth.TextColor = _smooth ? Color.White : T.Sub;
+            if (_smooth)
+            {
+                _btnSmooth.Fill = T.Ok;
+                _btnSmooth.FillHover = T.Light ? Color.FromArgb(48, 219, 91) : Color.FromArgb(64, 214, 104);
+                _btnSmooth.Stroke = Color.Transparent;
+                _btnSmooth.TextColor = Color.White;
+            }
+            else
+            {
+                _btnSmooth.Fill = T.StopFill;
+                _btnSmooth.FillHover = T.Hover;
+                _btnSmooth.Stroke = T.StopStroke;
+                _btnSmooth.TextColor = T.Sub;
+            }
             _btnSmooth.Invalidate();
         }
 
