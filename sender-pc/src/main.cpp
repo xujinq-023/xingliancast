@@ -929,14 +929,20 @@ auto tick = [&]() {
           static int dropStreak = 0, cleanStreak = 0;
           if (dropDelta > 5) { dropStreak++; cleanStreak = 0; }
           else if (dropDelta <= 0) { cleanStreak++; dropStreak = 0; }
-          if (dropStreak >= 2 && cfg.fps > 30) {
-            fpsCap = 30;
-            Logf("[自适应] 电视解码积压(每秒丢 %ld 帧)，帧率限制到 30fps", dropDelta);
+          // 分档：60 → 30 → 24。只在「档位真的变了」时动作和打日志，避免每 2 秒重复刷屏；
+          // 恢复要连续 60 秒零丢弃（15 秒太短会和 30fps 互相抖，抖动本身就是卡顿）。
+          int wantCap = fpsCap;
+          if (dropStreak >= 2) {
+            wantCap = (fpsCap > 0) ? 24 : 30;
             dropStreak = 0;
-          } else if (cleanStreak >= 15 && fpsCap > 0) {
-            fpsCap = 0;
-            Logf("[自适应] 电视解码恢复正常，解除帧率限制");
+          } else if (cleanStreak >= 60 && fpsCap > 0) {
+            wantCap = 0;
             cleanStreak = 0;
+          }
+          if (wantCap != fpsCap) {
+            fpsCap = wantCap;
+            if (fpsCap > 0) Logf("[自适应] 电视解码积压(每秒丢 %ld 帧)，帧率限制到 %d fps", dropDelta, fpsCap);
+            else            Logf("[自适应] 电视解码恢复正常，解除帧率限制");
           }
           bool bad = (fs.lost > 5) || (dropDelta > 2);
           if (bad) { lossStreak++; okStreak = 0; } else { okStreak++; lossStreak = 0; }
