@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.33  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.34  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1738,8 +1738,8 @@ class LogoBox : Panel
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(92)));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
             for (int i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(44)));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(42)));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(150)));  // 指标块（2 行，留出分隔线空间）
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(72)));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(128)));  // 指标块（2 行）
             EnableDoubleBuffer(grid);
             ctl.Controls.Add(grid);
 
@@ -1895,26 +1895,9 @@ class LogoBox : Panel
                 _mv[i] = card;
                 meters.Controls.Add(card, i % 5, i / 5);
             }
-            // 功能区分隔线：宿主面板里顶部 Dock 一条 1px 线 + 下方指标区
-            var metersHost = new Panel();
-            metersHost.Dock = DockStyle.Fill;
-            metersHost.BackColor = Color.Transparent;
-            // 关键：宿主左右不留内边距，否则指标卡会相对按钮整体内缩 → 两区列宽对不齐。
-            // 只在顶部留 12px，让分隔线居中；线自身通过 lineWrap 的左右 6px 内缩避免冒头。
-            metersHost.Padding = new Padding(0, T.I(14), 0, 0);
-            var lineWrap = new Panel();
-            lineWrap.Dock = DockStyle.Top;
-            lineWrap.Height = T.I(2);
-            lineWrap.Padding = new Padding(T.I(6), 0, T.I(6), 0);
-            var sepLine = new Panel();
-            sepLine.Dock = DockStyle.Fill;
-            sepLine.BackColor = T.Light ? Color.FromArgb(170, 170, 178) : Color.FromArgb(96, 80, 168);
-            lineWrap.Controls.Add(sepLine);
-            meters.Margin = T.Pad(0, 14, 0, 0);          // 与上方 14px 对称，线正好居中
-            metersHost.Controls.Add(meters);
-            metersHost.Controls.Add(lineWrap);
-            grid.Controls.Add(metersHost, 0, 5);
-            grid.SetColumnSpan(metersHost, 4);
+            meters.Margin = T.Pad(0, 8, 0, 0);
+            grid.Controls.Add(meters, 0, 5);
+            grid.SetColumnSpan(meters, 4);
             SetState("未连接", 0);
             if (Environment.GetEnvironmentVariable("PJS_UI_DEBUG") != null)
                 Shown += delegate { DumpLayout(); };
@@ -2103,7 +2086,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.33  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.34  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
