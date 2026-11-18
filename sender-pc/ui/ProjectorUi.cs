@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.39  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.41  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2089,7 +2089,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.39  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.41  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2461,6 +2461,9 @@ class LogoBox : Panel
             var prevDev = _cboDevice.SelectedItem as Discovery.Device;
             string selName = prevDev != null ? prevDev.Name : null;
             _searching = false;                       // 已有结果（哪怕为空）
+            // 每秒一次的信标会把相同列表反复重填，导致下拉框/焦点每秒闪烁、鼠标点不动。
+            // 内容没变化就不再动控件。
+            if (SameDeviceList(devices)) { UpdateDeviceHint(); return; }
             _cboDevice.Items.Clear();
             foreach (var d in devices) _cboDevice.Items.Add(d);
             if (_cboDevice.Items.Count > 0)
@@ -2477,10 +2480,24 @@ class LogoBox : Panel
                     var it = _cboDevice.Items[i] as Discovery.Device;
                     if (it != null && it.Name == selName) { idx = i; break; }
                 }
-            _cboDevice.SelectedIndex = idx;      // 强制跟随：IP 变了也选中同一台电视
+            if (_cboDevice.SelectedIndex != idx) _cboDevice.SelectedIndex = idx;   // 只在变化时设置
         }
 
         /// <summary>接收端下拉右侧的提示：完全没找到 TV 时显示红色说明。</summary>
+        /// <summary>与当前下拉框内容比较（按 IP + 名称），用于跳过无变化的重填。</summary>
+        bool SameDeviceList(List<Discovery.Device> devices)
+        {
+            if (_cboDevice == null) return false;
+            if (devices.Count != _cboDevice.Items.Count) return false;
+            for (int i = 0; i < devices.Count; i++)
+            {
+                var cur = _cboDevice.Items[i] as Discovery.Device;
+                if (cur == null) return false;
+                if (cur.Ip != devices[i].Ip || cur.Name != devices[i].Name) return false;
+            }
+            return true;
+        }
+
         void UpdateDeviceHint()
         {
             if (_lblDeviceHint == null) return;
@@ -2489,7 +2506,7 @@ class LogoBox : Panel
             // 搜索结束后仍为空，才提示。
             bool show = !found && !_searching;
             _lblDeviceHint.Visible = show;
-            if (show) _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
+            if (show) { _lblDeviceHint.Text = "未发现电视端，请确认开启后重试"; _lblDeviceHint.TextAlign = ContentAlignment.MiddleLeft; }
             else RefreshTrafficLabel();
         }
 
@@ -2786,6 +2803,7 @@ class LogoBox : Panel
             if (!found && !_searching) return;          // 未发现电视时该位置显示红字提示
             _lblDeviceHint.Text = "累计发送 " + Human(_txTotalBytes);
             _lblDeviceHint.ForeColor = T.Muted;
+            _lblDeviceHint.TextAlign = ContentAlignment.MiddleRight;   // 累计发送靠右显示
             _lblDeviceHint.Visible = true;
         }
 
