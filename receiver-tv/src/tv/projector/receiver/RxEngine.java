@@ -388,7 +388,7 @@ public final class RxEngine {
         if (type == T_VIDEO) { if (kind != 0) { cntKindRej.incrementAndGet(); return; } stepVideo(seq, tslo, flags, kind, payload); }   // kind 0 = SLICE
         else if (type == T_META) stepMeta(seq, tslo, flags, payload);
         else if (type == T_CTRL) stepCtrl(payload, srcIp);
-        else { if (kind != 1) return; stepAudio(seq, flags, payload, tslo); }                               // kind 1 = AAC
+        else { if (kind != 1 && kind != 0) return; stepAudio(seq, flags, payload, tslo); }   // 1=AAC；0 兼容老发送端
     }
 
     /** Control packet (CTRL): "bye" = sender stopped casting; drop the decoder right away so

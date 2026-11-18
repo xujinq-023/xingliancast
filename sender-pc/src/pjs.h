@@ -137,7 +137,7 @@ class UdpOut {
   // 音频: 一包一 ADTS AAC 帧 (spec §3: type=AUDIO codec=1)。仅音频线程调用。
   void send_audio(const uint8_t* f, size_t n, uint64_t ts_us) {
     if (n == 0 || n > MAX_PAYLOAD) return;            // 超限帧直接丢弃，不发半截（接收端会当正常帧播放）
-    auto pkt = packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, SLICE, f, n);
+    auto pkt = packet(AUDIO, 1, ++aseq_, ts_us, FIRST | LAST, 1 /*kind=AAC*/, f, n);   // 电视端按 kind==1 识别音频
     abytes_ += pkt.size();
     send_raw(pkt);
   }
