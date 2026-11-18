@@ -52,6 +52,24 @@ final class Discovery implements Runnable {
         if (thread != null) thread.interrupt();
     }
 
+    /** 立刻广播一次（供 PC 主动探测时立即回应）。 */
+    void sendOnce() {
+        try {
+            for (InetAddress b : broadcastAddrs()) {
+                DatagramSocket s = null;
+                try {
+                    s = new DatagramSocket();
+                    s.setBroadcast(true);
+                    byte[] msg = payload(localIp(b));
+                    s.send(new DatagramPacket(msg, msg.length, b, PORT));
+                } catch (Throwable ignored) {
+                } finally {
+                    if (s != null) { try { s.close(); } catch (Throwable ignored) { } }
+                }
+            }
+        } catch (Throwable ignored) { }
+    }
+
     @Override public void run() {
         while (running) {
             try {

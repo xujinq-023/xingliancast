@@ -990,6 +990,10 @@ auto tick = [&]() {
                  frames ? enc_us / frames / 1000.0 : 0.0,
                  (unsigned long long)(e - last_send_err),
                  mode == 2 ? "纹理" : mode == 1 ? "GPU转换" : "CPU");
+        {   // 累计发送字节（界面据此显示「总发送流量」）
+          size_t used2 = strlen(line);
+          snprintf(line + used2, sizeof line - used2, " txbytes=%llu", (unsigned long long)out.bytes());
+        }
         if (fs.alive) {   // TV 回传有效时追加接收端指标
           size_t used = strlen(line);
           snprintf(line + used, sizeof line - used, " tvfps=%.1f tvlost=%ld tvdrop=%ld rtt=%.1f",

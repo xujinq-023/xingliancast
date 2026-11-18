@@ -395,6 +395,7 @@ public final class RxEngine {
      *  the TV leaves the frozen frame immediately instead of waiting for the idle timeout. */
     private void stepCtrl(byte[] payload, String srcIp) {
         String s = new String(payload, java.nio.charset.StandardCharsets.UTF_8);
+        if (s.startsWith("probe")) { disc.sendOnce(); return; }   // PC 主动探测：立刻广播一次设备信息
         if (s.startsWith("p")) { sendPong(payload); return; }
         // 只接受「当前会话」发来的 bye / 锁屏事件；被拒绝的后来者也会发 bye，绝不能因此断掉正在投屏的会话
         boolean fromOwner = srcIp == null || srcIp.equals(peer);

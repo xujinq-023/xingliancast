@@ -1092,7 +1092,8 @@ namespace ProjectorUi
         {
             public string Name = "TV", Ip = "", Model = "";
             public int Port = 45690;
-            public override string ToString() { return Name + "  ·  " + Ip; }
+            public DateTime LastSeen = DateTime.UtcNow;   // 用于淘汰「已退出的电视」
+            public override string ToString() { return (Ip == null || Ip.Length == 0) ? Name : Name + "  ·  " + Ip; }
         }
 
         readonly Dictionary<string, Device> _devices = new Dictionary<string, Device>();
@@ -1106,6 +1107,21 @@ namespace ProjectorUi
         static extern bool SetHandleInformation(IntPtr h, uint mask, uint flags);
         const uint HANDLE_FLAG_INHERIT = 0x1;
 
+        /// <summary>主动探测：向局域网广播 probe，电视收到后立刻回一次设备信标。</summary>
+        void ProbeTv()
+        {
+            try
+            {
+                using (var s = new UdpClient())
+                {
+                    s.EnableBroadcast = true;
+                    byte[] msg = Encoding.UTF8.GetBytes("PJS/1 probe");
+                    s.Send(msg, msg.Length, new IPEndPoint(IPAddress.Broadcast, 45690));
+                }
+            }
+            catch { }
+        }
+
         public void Start(FoundHandler onFound)
         {
             _run = true;
@@ -1116,12 +1132,34 @@ namespace ProjectorUi
                     try
                     {
                         _udp = new UdpClient(Port);
-                        _udp.Client.ReceiveTimeout = 0;
+                        _udp.Client.ReceiveTimeout = 1000;   // 1 秒超时：靠超时淘汰已退出的电视
                         try { SetHandleInformation(_udp.Client.Handle, HANDLE_FLAG_INHERIT, 0); } catch { }
                         var ep = new IPEndPoint(IPAddress.Any, 0);
                         while (_run)
                         {
-                            byte[] data = _udp.Receive(ref ep);
+                            byte[] data;
+                            try { data = _udp.Receive(ref ep); }
+                            catch (SocketException se)
+                            {
+                                if (se.SocketErrorCode != SocketError.TimedOut &&
+                                    se.SocketErrorCode != SocketError.WouldBlock) throw;
+                                // 1 秒内没收到任何信标：把超过 3 秒没出现的电视清掉并通知界面
+                                bool removed = false;
+                                var snap0 = new List<Device>();
+                                lock (_devices)
+                                {
+                                    var dead = new List<string>();
+                                    foreach (var kvp in _devices)
+                                        if ((DateTime.UtcNow - kvp.Value.LastSeen).TotalMilliseconds > 3000)
+                                            dead.Add(kvp.Key);
+                                    foreach (var k3 in dead) { _devices.Remove(k3); removed = true; }
+                                    snap0.AddRange(_devices.Values);
+                                }
+                                // 每秒都通知：冷启动时电视没开，也必须让界面显示“未发现电视端”提示
+                                if (onFound != null) onFound(snap0);
+                                if (snap0.Count == 0) ProbeTv();   // 列表为空 → 主动广播探测，让电视立刻回应
+                                continue;
+                            }
                             string text = Encoding.UTF8.GetString(data);
                             if (!text.StartsWith("PJS/1")) continue;
                             var kv = new Dictionary<string, string>();
@@ -1139,6 +1177,7 @@ namespace ProjectorUi
                             d.Ip = ep.Address.ToString();
                             int p;
                             if (kv.ContainsKey("port") && int.TryParse(kv["port"], out p)) d.Port = p;
+                            d.LastSeen = DateTime.UtcNow;
                             lock (_devices)
                             {
                                 // 同一台电视（按名称）只保留最新 IP，避免下拉框里留着失效的旧地址
@@ -1240,7 +1279,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.36  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.37  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1412,7 +1451,7 @@ class LogoBox : Panel
         ToolStripMenuItem _miAutostart;
         FlatButton _btnAudio;
         ContextMenuStrip _menu;
-        bool _audioOn = true;
+        bool _audioOn = false;   // 默认不传声音（需要时手动打开）
         // runtime
         Process _proc;
         readonly Discovery _discovery = new Discovery();
@@ -1446,7 +1485,7 @@ class LogoBox : Panel
             }
             if (sysDpi >= 96) T.S = sysDpi / 96f;
             AutoScaleMode = AutoScaleMode.None;
-            ClientSize = T.Sz(780, 540);
+            ClientSize = T.Sz(780, 500);
             MinimumSize = T.Sz(720, 520);
             BackColor = T.Bg1;
             Font = T.F(13);
@@ -1686,7 +1725,7 @@ class LogoBox : Panel
             EnableDoubleBuffer(ft);
             ft.RowCount = 1;
             ft.BackColor = Color.Transparent;
-            ft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
+            ft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
             ft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12));
             ft.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32));
             _lblFootL = FootLabel(ContentAlignment.MiddleLeft, 18, 0);
@@ -1717,7 +1756,7 @@ class LogoBox : Panel
 
             _cardMain = new Card();
             _cardMain.Dock = DockStyle.Top;
-            _cardMain.Height = T.I(404);
+            _cardMain.Height = T.I(372);
             main.Controls.Add(_cardMain);
 
             var ctl = new BufPanel();
@@ -1729,15 +1768,16 @@ class LogoBox : Panel
             var grid = new TableLayoutPanel();
             grid.Dock = DockStyle.Top;
             grid.AutoSize = false;
-            grid.Height = T.I(44 * 4 + 72 + 128);
+            grid.Height = T.I(44 * 3 + 72 + 128);
             grid.BackColor = Color.Transparent;
             grid.ColumnCount = 4;
             grid.RowCount = 6;
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(72)));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(92)));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
-            for (int i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(44)));
+            for (int i = 0; i < 3; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(44)));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));   // 原接收端行已并入第一行
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(72)));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(128)));  // 指标块（2 行）
             EnableDoubleBuffer(grid);
@@ -1746,7 +1786,7 @@ class LogoBox : Panel
             grid.Controls.Add(Txt("显示器"), 0, 0);
             _cboMonitor = Combo();
             grid.Controls.Add(_cboMonitor, 1, 0);
-            grid.SetColumnSpan(_cboMonitor, 3);
+            grid.SetColumnSpan(_cboMonitor, 1);
 
             grid.Controls.Add(Txt("分辨率"), 0, 1);
             _cboHeight = Combo();
@@ -1772,9 +1812,9 @@ class LogoBox : Panel
             _cboLogSize.SelectedIndex = 0;
             grid.Controls.Add(_cboLogSize, 3, 2);
 
-            grid.Controls.Add(Txt("接收端"), 0, 3);
+            grid.Controls.Add(Txt("接收端"), 2, 0);
             _cboDevice = Combo();
-            grid.Controls.Add(_cboDevice, 1, 3);
+            grid.Controls.Add(_cboDevice, 3, 0);
 
             _btnRefresh = new FlatButton();
             _btnRefresh.Text = "刷新";
@@ -1785,19 +1825,19 @@ class LogoBox : Panel
             _btnRefresh.Margin = T.Pad(6, 6, 0, 6);
             _btnRefresh.Click += delegate { RefreshDevices(); };
 
-            grid.Controls.Add(_btnRefresh, 2, 3);
-            grid.SetColumnSpan(_btnRefresh, 1);
+            // 刷新按钮已移除：接收端由每秒发现信标自动更新
+
 
             // 未发现 TV 的提示：放在「刷新」右侧，与接收端下拉同一行
             _lblDeviceHint = new Label2();
-            _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
+            _lblDeviceHint.Text = "未发现电视端，请确认已开启";
             _lblDeviceHint.Font = T.F(12);
             _lblDeviceHint.ForeColor = T.Err;
             _lblDeviceHint.Dock = DockStyle.Fill;
             _lblDeviceHint.Margin = T.Pad(8, 0, 0, 0);
             _lblDeviceHint.TextAlign = ContentAlignment.MiddleLeft;
             _lblDeviceHint.Visible = true;      // 启动即提示，直到发现 TV 才隐藏
-            grid.Controls.Add(_lblDeviceHint, 3, 3);
+            // 提示标签不再占用布局（提示语改到接收端框内）
 
             var btnRow = new TableLayoutPanel();
             btnRow.ColumnCount = 5;
@@ -1868,7 +1908,7 @@ class LogoBox : Panel
             btnRow.Controls.Add(_btnAutoRecover, 3, 0);
             btnRow.Controls.Add(_btnSmooth, 4, 0);
             grid.Controls.Add(btnRow, 0, 4);
-            grid.SetColumnSpan(btnRow, 4);
+            grid.SetColumnSpan(btnRow, 5);
 
             // ---- 指标卡片（2 行 x 5 列）----
             var meters = new TableLayoutPanel();
@@ -1883,8 +1923,8 @@ class LogoBox : Panel
             meters.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             var titles = new[]
             {
-                "电脑帧率", "编码耗时/帧", "音频带宽", "网络流量", "电脑丢包/秒",
-                "电视帧率", "采集卡顿", "限帧丢弃", "网络延迟", "电视丢包/秒"
+                "电脑帧率", "编码耗时/帧", "音频带宽", "实时流量", "电脑丢包/秒",
+                "电视帧率", "采集卡顿", "限帧丢弃", "网络延迟", "总发送流量"
             };
             for (int i = 0; i < 10; i++)
             {
@@ -1897,7 +1937,7 @@ class LogoBox : Panel
             }
             meters.Margin = T.Pad(0, 8, 0, 0);
             grid.Controls.Add(meters, 0, 5);
-            grid.SetColumnSpan(meters, 4);
+            grid.SetColumnSpan(meters, 5);
             SetState("未连接", 0);
             if (Environment.GetEnvironmentVariable("PJS_UI_DEBUG") != null)
                 Shown += delegate { DumpLayout(); };
@@ -1968,7 +2008,7 @@ class LogoBox : Panel
                     {
                         ActiveControl = null;
                         c.BackColor = T.Card2;
-                        c.ForeColor = T.Text;
+                        c.ForeColor = (c == _cboDevice) ? c.ForeColor : T.Text;   // 接收端的红色提示不要被覆盖
                         c.Invalidate();
                     });
                 }
@@ -1986,8 +2026,10 @@ class LogoBox : Panel
                 var b = e.Bounds;
                 b.Inflate(-1, 0);
                 using (var br = new SolidBrush(sel ? T.SelectBg : T.Card2)) e.Graphics.FillRectangle(br, b);
+                var devIt = c.Items[e.Index] as Discovery.Device;
+                bool ph = devIt != null && (devIt.Ip == null || devIt.Ip.Length == 0);   // 占位「未发现电视端」用红字
                 TextRenderer.DrawText(e.Graphics, c.Items[e.Index].ToString(), c.Font, b,
-                                      sel ? T.SelectFg : T.Text,
+                                      sel ? T.SelectFg : (ph ? T.Err : T.Text),
                                       TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
             };
             return c;
@@ -2086,7 +2128,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.36  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.37  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2428,7 +2470,19 @@ class LogoBox : Panel
                 if (_closing) return;
                 try { BeginInvoke((Action)delegate { UpdateDeviceList(devices); }); } catch { }
             };
-            _discovery.Start(_onFound);
+            try { _discovery.Start(_onFound); UiLog("StartDiscovery: discovery.Start 返回 ok"); }
+            catch (Exception ex) { UiLog("StartDiscovery: discovery.Start 抛异常 " + ex.GetType().Name + " " + ex.Message); }
+            // 启动即显示红色提示「未发现电视端，请确认已开启」。
+            // 注意：本方法在构造期被调用（此时下拉框还没创建），所以必须延后到消息循环里再补。
+            var seedTimer = new System.Windows.Forms.Timer();
+            seedTimer.Interval = 300;
+            seedTimer.Tick += delegate
+            {
+                seedTimer.Stop(); seedTimer.Dispose();
+                try { if (_cboDevice != null && _cboDevice.Items.Count == 0) UpdateDeviceList(new List<Discovery.Device>()); }
+                catch { }
+            };
+            seedTimer.Start();
             var hint = new System.Windows.Forms.Timer();
             hint.Interval = 10000;
             hint.Tick += delegate
@@ -2441,19 +2495,37 @@ class LogoBox : Panel
 
         void UpdateDeviceList(List<Discovery.Device> devices)
         {
+            UiLog("UpdateDeviceList: 入参 " + devices.Count + " 项, _cboDevice=" + (_cboDevice == null ? "null" : "ok")
+                  + ", 现有项 " + (_cboDevice == null ? -1 : _cboDevice.Items.Count));
+            if (_cboDevice == null) { UiLog("UpdateDeviceList: _cboDevice 为空，直接返回"); return; }
             // 记住「设备名」而不是「名字+IP」：电视换 IP 后同名设备要能自动重新选中
             var prevDev = _cboDevice.SelectedItem as Discovery.Device;
             string selName = prevDev != null ? prevDev.Name : null;
-            _searching = false;                       // 已有结果（哪怕为空）
+            _searching = false;
+
+            bool changed = !SameDeviceList(devices);
+            if (devices.Count == 0)
+            {
+                if (changed)   // 提示语直接显示在接收端框内（红色），不再单独占一行
+                {
+                    _cboDevice.Items.Clear();
+                    _cboDevice.Items.Add(new Discovery.Device { Name = "未发现电视端，请确认已开启", Ip = "" });
+                    _cboDevice.SelectedIndex = 0;
+                    _cboDevice.ForeColor = T.Err;
+                }
+                _cboDevice.Enabled = false;   // 没有设备时下拉无意义，直接禁用
+                UpdateDeviceHint();
+                return;
+            }
+            if (!changed) return;   // 每秒信标：内容没变就绝不碰控件（否则下拉框每秒闪、点不开）
+
+            _cboDevice.Enabled = true;
+            _cboDevice.ForeColor = T.Text;
             _cboDevice.Items.Clear();
             foreach (var d in devices) _cboDevice.Items.Add(d);
-            if (_cboDevice.Items.Count > 0)
-            {
-                EndRefresh();
-                if (_proc == null || _proc.HasExited) SetState("已停止", 0);   // 清掉错误态文字
-            }
+            EndRefresh();
+            if (_proc == null || _proc.HasExited) SetState("已停止", 0);   // 清掉错误态文字
             UpdateDeviceHint();
-            if (_cboDevice.Items.Count == 0) return;
             int idx = 0;
             if (selName != null)
                 for (int i = 0; i < _cboDevice.Items.Count; i++)
@@ -2461,7 +2533,28 @@ class LogoBox : Panel
                     var it = _cboDevice.Items[i] as Discovery.Device;
                     if (it != null && it.Name == selName) { idx = i; break; }
                 }
-            _cboDevice.SelectedIndex = idx;      // 强制跟随：IP 变了也选中同一台电视
+            if (_cboDevice.SelectedIndex != idx) _cboDevice.SelectedIndex = idx;   // 只在变化时设置
+        }
+
+        /// <summary>与下拉框当前内容比较（含“未发现电视”占位项），用于跳过无变化的重填。</summary>
+        bool SameDeviceList(List<Discovery.Device> devices)
+        {
+            if (_cboDevice == null) return false;
+            int n = _cboDevice.Items.Count;
+            if (n == 0) return false;   // 空列表 → 必须重新填充（否则占位提示永远补不上）
+            if (n == 1)
+            {
+                var only = _cboDevice.Items[0] as Discovery.Device;
+                if (only != null && (only.Ip == null || only.Ip.Length == 0)) return devices.Count == 0;
+            }
+            if (devices.Count != n) return false;
+            for (int i = 0; i < n; i++)
+            {
+                var cur = _cboDevice.Items[i] as Discovery.Device;
+                if (cur == null) return false;
+                if (cur.Ip != devices[i].Ip || cur.Name != devices[i].Name) return false;
+            }
+            return true;
         }
 
         /// <summary>接收端下拉右侧的提示：完全没找到 TV 时显示红色说明。</summary>
@@ -2472,8 +2565,8 @@ class LogoBox : Panel
             // 搜索进行中不刷新红字（点刷新时列表会先被清空，否则会闪过"未发现"）；
             // 搜索结束后仍为空，才提示。
             bool show = !found && !_searching;
-            _lblDeviceHint.Visible = show;
-            if (show) _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
+            if (_lblDeviceHint != null) _lblDeviceHint.Visible = false;   // 提示已并入接收端框内
+            if (show) _lblDeviceHint.Text = "未发现电视端，请确认已开启";
         }
 
         void RefreshDevices()
@@ -2567,7 +2660,8 @@ class LogoBox : Panel
                 ShowTrialExhausted();
                 return;
             }
-            if (_cboDevice.SelectedItem == null)
+            var selDev = _cboDevice.SelectedItem as Discovery.Device;
+            if (selDev == null || selDev.Ip == null || selDev.Ip.Length == 0)
             {
                 SetState("未选择接收端", 3);
                 Log("[UI] 尚未发现接收端：确认电视端已启动，等下拉框出现设备后重试");
@@ -2733,6 +2827,7 @@ class LogoBox : Panel
         }
 
         /// <summary>把每秒统计行解析到 10 个指标卡片。</summary>
+        long _txTotalBytes = 0, _txSessionMax = 0;   // 软件启动以来累计发送（跨会话）
         void UpdateMetrics(string line)
         {
             if (_mv[0] == null) return;
@@ -2747,7 +2842,28 @@ class LogoBox : Panel
             _mv[7].Set(Field(line, "限=", "") + " 帧");              // 限帧丢弃
             _mv[8].Set(tv && !line.Contains("rtt=-1.0") ? Round1(Field(line, "rtt=", "")) + " ms" : "—");
             // 电视丢包/秒：TV 端每秒上报的丢包增量，直接显示
-            _mv[9].Set(tv ? Field(line, "tvlost=", "") : "—");
+            UpdateTotalTraffic(line);
+        }
+
+        // 累计发送：引擎每秒统计行带 txbytes=<本次会话累计字节>；数值回退即视为新会话。
+        void UpdateTotalTraffic(string line)
+        {
+            string s = Field(line, "txbytes=", "");
+            long v;
+            if (!long.TryParse(s, out v) || v < 0) return;
+            if (v >= _txSessionMax) { _txTotalBytes += (v - _txSessionMax); _txSessionMax = v; }
+            else { _txTotalBytes += v; _txSessionMax = v; }
+            if (_mv[9] != null) _mv[9].Set(Human(_txTotalBytes));
+        }
+
+        static string Human(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            double kb = bytes / 1024.0;
+            if (kb < 1024) return kb.ToString("0") + " KB";
+            double mb = kb / 1024.0;
+            if (mb < 1024) return mb.ToString("0.0") + " MB";
+            return (mb / 1024.0).ToString("0.00") + " GB";
         }
 
         static string Round1(string s)
@@ -2771,6 +2887,23 @@ class LogoBox : Panel
         {
             if (string.IsNullOrEmpty(line)) return;
             Debug.WriteLine("[ui] " + line);
+        }
+
+        /// <summary>界面诊断日志：写到 exe 同目录 ui.log（排查启动/发现类问题用）。</summary>
+        static string UiLogPath()
+        {
+            try { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "星联投屏", "ui.log"); }
+            catch { return Path.Combine(Path.GetTempPath(), "ui.log"); }
+        }
+        static void UiLog(string msg)
+        {
+            try
+            {
+                string p = UiLogPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(p));
+                File.AppendAllText(p, DateTime.Now.ToString("MM-dd HH:mm:ss.fff") + "  " + msg + Environment.NewLine);
+            }
+            catch { }
         }
 
         // ---------------- 托盘：原生 Shell_NotifyIcon ----------------
