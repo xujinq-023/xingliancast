@@ -205,7 +205,7 @@ static void BlendCursorImage(uint8_t* base, int pitch, int W, int H,
 }
 static CurBitmap g_curBmp;
 
-struct Cfg { std::string ip = ""; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; bool audio = true; int display = 0; std::string logPath; int logSizeMB = 5; bool switched = false; bool smooth = false; };
+struct Cfg { std::string ip = ""; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; bool audio = true; int display = 0; std::string logPath; int logSizeMB = 5; bool switched = false; bool smooth = false; int pace = 0; };
 
 static Cfg ParseArgs(int argc, char** argv) {
   Cfg c;
@@ -218,6 +218,7 @@ static Cfg ParseArgs(int argc, char** argv) {
     else if (k == "--port") { c.port = atoi(val().c_str()); if (c.port < 1 || c.port > 65535) c.port = pjs::DEFAULT_PORT; }
     else if (k == "--bitrate") { c.bitrate = atoi(val().c_str()); if (c.bitrate < 100) c.bitrate = 100; if (c.bitrate > 100000) c.bitrate = 100000; }
     else if (k == "--fps") { c.fps = atoi(val().c_str()); if (c.fps < 1) c.fps = 1; if (c.fps > 240) c.fps = 240; }
+    else if (k == "--pace") { c.pace = atoi(val().c_str()); if (c.pace < 0) c.pace = 0; if (c.pace > 240) c.pace = 240; }
     else if (k == "--height") { c.height = atoi(val().c_str()); if (c.height < 0) c.height = 0; if (c.height > 4320) c.height = 4320; }
     else if (k == "--display") { c.display = atoi(val().c_str()); if (c.display < 0) c.display = 0; if (c.display > 63) c.display = 63; }
     else if (k == "--log") c.logPath = val();
@@ -234,6 +235,8 @@ static int g_trialUsedSec = 0;
 static bool g_licensed = true;
 static bool g_tvBusy = false;      // 电视已被另一台电脑占用
 static bool g_tvLost = false;      // 电视端退出/关机（状态回传中断）
+static std::atomic<uint64_t> g_wgcf{ 0 };
+static double g_dbgEff = 0, g_dbgTok = 0; static uint64_t g_dbgGap = 0;   // 诊断：限流器实际参数   // WGC 每秒回调次数（诊断）
 
 // ---------- 编码器配置记忆 ----------
 // 某些 Intel QSV 驱动「创建成功但一帧不出」，探测要 2~3 秒；把上次可用的组合记下来，
@@ -262,6 +265,60 @@ static void EncProfileSave(bool sw, int mode) {
 
 
 int main(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    if (std::string(argv[i]) == "--wgc-test") {
+      printf("WGC probe: elevated=%d\n", (int)[] { BOOL r = FALSE; HANDLE t = GetCurrentProcess();
+        if (OpenProcessToken(t, TOKEN_QUERY, &t)) { TOKEN_ELEVATION e{}; DWORD n = 0;
+          if (GetTokenInformation(t, TokenElevation, &e, sizeof e, &n)) r = e.TokenIsElevated; CloseHandle(t); }
+        return r; }());
+      try { winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            printf("init_apartment ok\n"); }
+      catch (winrt::hresult_error& e) { printf("init_apartment 0x%08lx\n", (unsigned long)e.code()); }
+      try { printf("IsSupported=%d\n", (int)caps::GraphicsCaptureSession::IsSupported()); } catch (...) { printf("IsSupported fail\n"); }
+      try {
+        auto factory = winrt::get_activation_factory<caps::GraphicsCaptureItem>();
+        auto interop = factory.as<IGraphicsCaptureItemInterop>();
+        HMONITOR mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        caps::GraphicsCaptureItem item{ nullptr };
+        HRESULT hr = interop->CreateForMonitor(mon, winrt::guid_of<caps::GraphicsCaptureItem>(), winrt::put_abi(item));
+        printf("CreateForMonitor hr=0x%08lx\n", (unsigned long)hr);
+        HWND fg = GetForegroundWindow();
+        caps::GraphicsCaptureItem it2{ nullptr };
+        HRESULT hr2 = interop->CreateForWindow(fg ? fg : GetConsoleWindow(), winrt::guid_of<caps::GraphicsCaptureItem>(), winrt::put_abi(it2));
+        printf("CreateForWindow hr=0x%08lx\n", (unsigned long)hr2);
+      } catch (winrt::hresult_error& e) { printf("probe exception 0x%08lx\n", (unsigned long)e.code()); }
+      // 试抓「自己的窗口」：若连自己都被拒绝，说明是整类 API 被系统禁用
+      try {
+        WNDCLASSEXW wc{}; wc.cbSize = sizeof wc; wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"XLWgcProbeWnd";
+        RegisterClassExW(&wc);
+        HWND self = CreateWindowExW(0, L"XLWgcProbeWnd", L"probe", WS_OVERLAPPEDWINDOW,
+                                    0, 0, 320, 240, nullptr, nullptr, wc.hInstance, nullptr);
+        printf("self hwnd=%p\n", (void*)self);
+        if (self) {
+          auto factory2 = winrt::get_activation_factory<caps::GraphicsCaptureItem>();
+          auto interop2 = factory2.as<IGraphicsCaptureItemInterop>();
+          caps::GraphicsCaptureItem it3{ nullptr };
+          HRESULT hr3 = interop2->CreateForWindow(self, winrt::guid_of<caps::GraphicsCaptureItem>(), winrt::put_abi(it3));
+          printf("self CreateForWindow hr=0x%08lx\n", (unsigned long)hr3);
+        }
+      } catch (winrt::hresult_error& e) { printf("self exception 0x%08lx\n", (unsigned long)e.code()); }
+      // 再试 STA（部分 WinRT 捕获接口要求单线程套间）
+      std::thread([]{
+        HRESULT ci = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        printf("STA: CoInitializeEx=0x%08lx\n", (unsigned long)ci);
+        try {
+          auto factory = winrt::get_activation_factory<caps::GraphicsCaptureItem>();
+          auto interop = factory.as<IGraphicsCaptureItemInterop>();
+          HMONITOR mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+          caps::GraphicsCaptureItem it{ nullptr };
+          HRESULT hr = interop->CreateForMonitor(mon, winrt::guid_of<caps::GraphicsCaptureItem>(), winrt::put_abi(it));
+          printf("STA: CreateForMonitor hr=0x%08lx\n", (unsigned long)hr);
+        } catch (winrt::hresult_error& e) { printf("STA: exception 0x%08lx\n", (unsigned long)e.code()); }
+      }).join();
+      return 0;
+    }
+  }
   setvbuf(stdout, nullptr, _IONBF, 0);
   SetConsoleOutputCP(65001);
   // 进程级 DPI 感知：DDA 的帧是物理像素，光标坐标/系统尺寸也必须按物理像素解释，
@@ -389,10 +446,26 @@ int main(int argc, char** argv) {
     ComPtr<IDXGIOutputDuplication> dup;
     caps::GraphicsCaptureItem item{ nullptr };
     try {
+      // WGC 需要线程处于 WinRT apartment；没初始化时 get_activation_factory 可能直接
+      // 返回 E_ACCESSDENIED（0x80070005），看起来像“没权限”，其实是没初始化 WinRT。
+      try { winrt::init_apartment(winrt::apartment_type::multi_threaded); }
+      catch (winrt::hresult_error& e) { Logf("WGC: init_apartment 0x%08lx\n", (unsigned long)e.code()); }
+      try { Logf("WGC: IsSupported=%d\n", (int)caps::GraphicsCaptureSession::IsSupported()); }
+      catch (...) { Logf("WGC: IsSupported 查询失败\n"); }
       auto factory = winrt::get_activation_factory<caps::GraphicsCaptureItem>();
       auto interop = factory.as<IGraphicsCaptureItemInterop>();
-      winrt::check_hresult(interop->CreateForMonitor(mon, winrt::guid_of<caps::GraphicsCaptureItem>(),
-                                                     winrt::put_abi(item)));
+      HRESULT hrMon = interop->CreateForMonitor(mon, winrt::guid_of<caps::GraphicsCaptureItem>(),
+                                                winrt::put_abi(item));
+      Logf("WGC: CreateForMonitor hr=0x%08lx\n", (unsigned long)hrMon);
+      if (FAILED(hrMon)) {
+        HWND fg = GetForegroundWindow();
+        caps::GraphicsCaptureItem item2{ nullptr };
+        HRESULT hrWin = interop->CreateForWindow(fg, winrt::guid_of<caps::GraphicsCaptureItem>(),
+                                                 winrt::put_abi(item2));
+        Logf("WGC: CreateForWindow(hwnd=%p) hr=0x%08lx\n", (void*)fg, (unsigned long)hrWin);
+        if (SUCCEEDED(hrWin)) { item = item2; hrMon = S_OK; }
+        else winrt::check_hresult(hrMon);
+      }
     } catch (winrt::hresult_error& e) {
       Logf("WGC 不可用 0x%08lx，改用 DesktopDuplication\n", (unsigned long)e.code());
       useDDA = true;
@@ -638,10 +711,11 @@ int main(int argc, char** argv) {
     bool havePauseFrame = false, pauseFirstIdr = true;
 
     int fpsCap = 0;                  // 0 = 不限制；>0 = 电视吃不消时的临时帧率上限
-    uint64_t n_acq = 0, n_lim = 0;   // 诊断：捕获源给帧数 / 被限帧丢弃数（每秒清零）
+    uint64_t n_acq = 0, n_lim = 0, n_enc = 0;   // 诊断：捕获源给帧数 / 被限帧丢弃数（每秒清零）
     uint64_t totalAcq = 0, totalLim = 0;   // 累计值，用于"始终没有画面"判断
     uint64_t win_us = 0, win_n = 0;  // （保留字段，令牌桶已取代）
     double tb_tokens = 0.0; uint64_t tb_last = 0;
+    double paceFps = cfg.pace > 0 ? (double)cfg.pace : cfg.fps;   // 节拍器：固定 pace 或跟随实测抓屏速率
     uint64_t gap_max = 0, gap_big = 0;
     LONGLONG last_t100 = 0; uint64_t tgap_max = 0;
     bool first = true;
@@ -659,12 +733,23 @@ int main(int argc, char** argv) {
         if (gap > 25000) gap_big++;                 // 诊断：>25ms 的帧间隔（视觉上就是卡一下）
         // 令牌桶（连续补充）：每秒 fps 个令牌。不能用「每秒配额」——那会先放行一整秒的帧、
         // 再冻结剩余时间（实测 --fps 30 时出现 484ms 的大间隔）。
-        const int effFps = fpsCap > 0 ? (fpsCap < cfg.fps ? fpsCap : cfg.fps) : cfg.fps;
-        tb_tokens += (double)(nowus - tb_last) * effFps / 1e6;
-        if (tb_tokens > 2.0) tb_tokens = 2.0;       // 允许 2 帧突发
-        tb_last = nowus;
-        if (tb_tokens < 1.0) { n_lim++; totalLim++; return; }
-        tb_tokens -= 1.0;
+        // 直接读 cfg.pace：避免 paceFps 在 lambda 捕获/更新时序上的不一致（曾导致 pace=60 实际按 30 限流）
+        // 直接读 cfg.pace：避免 paceFps 捕获时序问题
+        const double effFps = fpsCap > 0 ? (fpsCap < cfg.fps ? fpsCap : cfg.fps)
+                                         : (cfg.pace > 0 ? (double)cfg.pace : paceFps);
+        bool sameBatch = (nowus - tb_last) < 2000;   // 2ms 内的连续帧属于同一刷新周期
+        if (sameBatch) {
+          n_enc++;
+        } else {
+          tb_tokens += (double)(nowus - tb_last) * effFps / 1e6;
+          if (tb_tokens > 3.0) tb_tokens = 3.0;
+          // 关键：被拦下时绝不能推进 tb_last —— 否则这一帧的时间额度被吞掉，
+          // 令牌永远停在 0.98~0.99，导致「隔帧丢弃」，60fps 稳定掉成 30fps。
+          if (tb_tokens < 1.0) { n_lim++; totalLim++; g_dbgEff = effFps; g_dbgTok = tb_tokens; g_dbgGap = nowus - tb_last; return; }
+          tb_tokens -= 1.0;
+          tb_last = nowus;
+          n_enc++;
+        }
       }
       // 对照：DDA 自带显示时间戳的间隔（100ns）。若它平稳而上面的 nowus 间隔有尖峰，
       // 说明桌面照常出帧、是我们循环晚了；若它也出现同样尖峰，则是桌面/合成器卡。
@@ -970,6 +1055,17 @@ auto tick = [&]() {
             okStreak = 0;
           }
         }
+        // 节拍器：跟住实测抓屏速率。抓屏抖动 → 输出仍然匀速（多余帧被丢弃，不足时不强补）
+        {
+          double measured = (double)n_acq;                     // 本秒抓到的帧数
+          double hi = (double)cfg.fps, lo = 25.0;
+          if (measured < lo) measured = lo;
+          if (measured > hi) measured = hi;
+          if (cfg.pace > 0) paceFps = (double)cfg.pace;        // 固定节拍模式：不跟随
+          else paceFps = (cfg.pace > 0) ? (double)cfg.pace : (double)cfg.fps;
+          if (paceFps < lo) paceFps = lo;
+          if (paceFps > hi) paceFps = hi;
+        }
         lastSecFrames = (int)frames;
         // 电视端退出/关机检测：本会话曾经收到过状态回传，若连续 5 秒收不到 → 判定已断开。
         // 只看"曾经收到过"是因为老版本电视端可能不发回传，避免误判。
@@ -996,7 +1092,7 @@ auto tick = [&]() {
                  mode == 2 ? "纹理" : mode == 1 ? "GPU转换" : "CPU");
         {   // 累计发送字节（界面据此显示「总发送流量」）
           size_t used2 = strlen(line);
-          snprintf(line + used2, sizeof line - used2, " txbytes=%llu", (unsigned long long)out.bytes());
+                    snprintf(line + used2, sizeof line - used2, " txbytes=%llu", (unsigned long long)out.bytes());
         }
         if (fs.alive) {   // TV 回传有效时追加接收端指标
           size_t used = strlen(line);
@@ -1076,7 +1172,7 @@ auto tick = [&]() {
       // 抓屏等待时间 = 2 个帧间隔（60fps → 33ms，最小 20ms）。
       // 原来等于 1 个间隔（16ms），会周期性在下一帧到达前超时 → 实测每秒只拿到 44 帧，
       // 4K60 视频投屏时就是肉眼可见的轻微卡顿（编码只要 2.2ms，瓶颈完全在抓屏节奏）。
-      const DWORD dda_ms = (DWORD)std::max<int64_t>((int64_t)(frame_int_us / 1000) * 2, 20);
+      const DWORD dda_ms = (DWORD)std::max<int64_t>((int64_t)(frame_int_us / 1000), 8);   // 回到 1 帧间隔：2 倍会把抓屏压到 30fps
       while (!g_stop) {
         if (g_paused) {
           // 锁屏期间：每 500ms 重发模糊帧，让电视保持解码（否则绿屏），同时遮罩文字照常显示
@@ -1201,7 +1297,7 @@ auto tick = [&]() {
     } else {
       // ---------- WGC 取帧循环 ----------
       winrt::handle evt{ CreateEventW(nullptr, FALSE, FALSE, nullptr) };
-      pool.FrameArrived([&](auto&&, auto&&) { SetEvent(evt.get()); });
+      pool.FrameArrived([&](auto&&, auto&&) { g_wgcf.fetch_add(1); SetEvent(evt.get()); });
       while (!g_stop) {
         WaitForSingleObject(evt.get(), 250);
         if (g_paused) {
@@ -1229,7 +1325,7 @@ auto tick = [&]() {
             ComPtr<dx11i::IDirect3DDxgiInterfaceAccess> acc; acc.Attach(rawacc);
             ComPtr<ID3D11Texture2D> srcTex;
             if (SUCCEEDED(acc->GetInterface(IID_PPV_ARGS(&srcTex)))) {
-              n_acq++; totalAcq++;
+              totalAcq++;
               LONGLONG t100 = (LONGLONG)frame.SystemRelativeTime().count();
               if (t100 <= 0) { LARGE_INTEGER q; QueryPerformanceCounter(&q); t100 = q.QuadPart * 10000000 / qpf.QuadPart; }
               process(srcTex.Get(), t100);
