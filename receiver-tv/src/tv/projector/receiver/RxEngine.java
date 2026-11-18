@@ -93,6 +93,14 @@ public final class RxEngine {
     private volatile byte[] csdSps, csdPps;             // applied SPS/PPS NAL (no start code)
     private volatile boolean waitingIdr = true;         // pipe sets true, rx clears on IDR enqueue
     private final ArrayDeque<Frame> auQ = new ArrayDeque<>();      // pipe-thread only
+    // 临时诊断计数（定位「包到了但 fed=0」）
+    private final java.util.concurrent.atomic.AtomicLong cntVid = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntMeta = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntAud = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntKindRej = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntFirst = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntDeliver = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong cntOrphan = new java.util.concurrent.atomic.AtomicLong();
     private final ArrayDeque<Integer> inIdx = new ArrayDeque<>();  // free input indices
     private int width, height;
 
@@ -232,7 +240,10 @@ public final class RxEngine {
                         + "\naud=" + audioFed.get()
                         + "\nadrop=" + audioDrop.get()
                         + "\nres=" + (width > 0 ? width + "x" + height : "-")
-                        + "\nneedidr=" + (waitingIdr ? 1 : 0);
+                        + " vid=" + cntVid.get() + " meta=" + cntMeta.get() + " aud=" + cntAud.get()
+                + " kindrej=" + cntKindRej.get() + " first=" + cntFirst.get()
+                + " deliver=" + cntDeliver.get() + " orphan=" + cntOrphan.get()
+                + "\nneedidr=" + (waitingIdr ? 1 : 0);
                     lostReported = lostPkts;
                     byte[] b = txt.getBytes(StandardCharsets.UTF_8);
                     s.send(new DatagramPacket(b, b.length, dst, 45692));
@@ -373,7 +384,8 @@ public final class RxEngine {
         if (plen > len - H) plen = len - H;
         if (plen <= 0) return;
         byte[] payload = Arrays.copyOfRange(d, off + H, off + H + plen);
-        if (type == T_VIDEO) { if (kind != 0) return; stepVideo(seq, tslo, flags, kind, payload); }   // kind 0 = SLICE
+        if (type == T_VIDEO) cntVid.incrementAndGet(); else if (type == T_META) cntMeta.incrementAndGet(); else if (type == T_AUDIO) cntAud.incrementAndGet();
+        if (type == T_VIDEO) { if (kind != 0) { cntKindRej.incrementAndGet(); return; } stepVideo(seq, tslo, flags, kind, payload); }   // kind 0 = SLICE
         else if (type == T_META) stepMeta(seq, tslo, flags, payload);
         else if (type == T_CTRL) stepCtrl(payload, srcIp);
         else { if (kind != 1) return; stepAudio(seq, flags, payload, tslo); }                               // kind 1 = AAC
@@ -441,6 +453,7 @@ public final class RxEngine {
             byte[] au = a.buf.toByteArray();
             boolean idr = a.idr;
             a.buf = null; a.done = false;
+            cntDeliver.incrementAndGet();
             onFrame(au, ts64(a.curTs), idr || hasNal(au, 5));
         }
         if (a.tracked) {
@@ -463,6 +476,7 @@ public final class RxEngine {
         } else if (!first) {
             return;                                            // join mid-stream: wait FIRST
         }
+        if (first) cntFirst.incrementAndGet();
         if (first && a.buf != null && tslo == a.curTs) {
             // same-ts continuation (multi-NAL AU): keep appending to the open group
         } else if (first) {
@@ -475,6 +489,7 @@ public final class RxEngine {
             // belongs to a foreign ts. Nothing to append to: advance lastSeq, drop quietly,
             // and do NOT wait for IDR. Only a decoder (re)config needs a fresh IDR;
             // starving P frames on orphans froze delivery at ~5% (drop-au 34884).
+            cntOrphan.incrementAndGet();
             a.buf = null; a.done = false;                      // stale partial AU from foreign ts
             a.lastSeq = seq;
             a.tracked = true;
