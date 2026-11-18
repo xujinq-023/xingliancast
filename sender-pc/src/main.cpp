@@ -861,7 +861,14 @@ auto tick = [&]() {
       // 心跳：桌面静止 + --noaudio 时链路上无包，接收端会按空闲超时掉解码器
       if (now - last_keep > 1000) { out.send_keepalive(); last_keep = now; }
       // 每秒 ping 一次，TV 回 pong → 算出网络 RTT
-      if (now - last_ping > 1000) { out.send_ping(now); last_ping = now; }
+      if (now - last_ping > 1000) {
+          // 时间戳必须与 feedback.h 计算 RTT 用的时钟一致（steady_clock/QPC）。
+          // 之前传的是 GetTickCount64()，两者基准差约 160ms → RTT 恒偏大 160ms。
+          uint64_t nowMsQpc = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch()).count();
+          out.send_ping(nowMsQpc);
+          last_ping = now;
+        }
       // 界面的「传输声音」勾选：共享内存里变了就立即生效
       if (ctl) { bool want = ctl[0] != 0; if (want != audioOn) setAudio(want); }
       // 锁屏检测（每秒一次）：进入锁屏 → 暂停抓屏 + 通知电视；解锁 → 重新初始化捕获 + 通知电视
