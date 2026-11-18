@@ -915,6 +915,27 @@ auto tick = [&]() {
           fprintf(stderr, "TV_BUSY\n");
           g_stop = true;
         }
+        // ---- 自适应码率：电视报丢包/解码积压时自动降码率（有线 20Mbps 卡顿多为链路/解码吃不下）----
+        static int curBitrate = cfg.bitrate;
+        static int lossStreak = 0, okStreak = 0;
+        static long lastDropSee = -1;
+        if (fs.alive) {
+          long dropDelta = (lastDropSee >= 0 && fs.drop > lastDropSee) ? (fs.drop - lastDropSee) : 0;
+          lastDropSee = fs.drop;
+          bool bad = (fs.lost > 5) || (dropDelta > 2);
+          if (bad) { lossStreak++; okStreak = 0; } else { okStreak++; lossStreak = 0; }
+          if (lossStreak >= 2 && curBitrate > 2000) {
+            curBitrate = curBitrate * 7 / 10; if (curBitrate < 2000) curBitrate = 2000;
+            enc.SetBitrate(curBitrate);
+            Logf("[自适应] 电视丢包(%ld)/积压(%ld)，码率降到 %d kbps（设置 %d）",
+                 fs.lost, dropDelta, curBitrate, cfg.bitrate);
+            lossStreak = 0;
+          } else if (okStreak >= 10 && curBitrate < cfg.bitrate) {
+            int next = curBitrate * 11 / 10; if (next > cfg.bitrate) next = cfg.bitrate;
+            if (next != curBitrate) { curBitrate = next; enc.SetBitrate(curBitrate); }
+            okStreak = 0;
+          }
+        }
         lastSecFrames = (int)frames;
         // 电视端退出/关机检测：本会话曾经收到过状态回传，若连续 5 秒收不到 → 判定已断开。
         // 只看"曾经收到过"是因为老版本电视端可能不发回传，避免误判。

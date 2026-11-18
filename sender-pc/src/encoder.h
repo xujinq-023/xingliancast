@@ -61,6 +61,19 @@ class H264Encoder {
 
  public:
 
+  // 运行中调整码率（自适应）：CBR 下改 MeanBitRate 即生效，无需重建编码器。
+  bool SetBitrate(int kbps) {
+    if (!mft_) return false;
+    bool ok = false;
+    ComPtr<IMFAttributes> at;
+    if (SUCCEEDED(mft_->GetAttributes(&at)) && at)
+      ok = SUCCEEDED(at->SetUINT64(CODECAPI_AVEncCommonMeanBitRate, (UINT64)kbps * 1000));
+    ComPtr<IMFMediaType> ot;                     // 部分 MFT 以输出类型上的 AVG_BITRATE 为准
+    if (SUCCEEDED(mft_->GetOutputCurrentType(0, &ot)) && ot)
+      ot->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)kbps * 1000);
+    return ok;
+  }
+
   // 可选 D3D 纹理输入：mgr/token = 与 VP 纹理同一 D3D11 设备的 device manager。
   // 硬件 MFT 接受 SET_D3D_MANAGER 后 d3d()=true → NextInputTex/EncodeGPU；失败调用方回退 Encode()。
   bool Create(int w, int h, int fps, int kbps, bool prefer_hw,
