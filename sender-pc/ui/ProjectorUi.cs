@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.28  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.30  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1811,7 +1811,7 @@ class LogoBox : Panel
             
             EnableDoubleBuffer(btnRow);
             btnRow.BackColor = Color.Transparent;
-            btnRow.Margin = T.Pad(0, 10, 0, 10);
+            btnRow.Margin = T.Pad(0, 10, 0, 0);
             
             _btnStart = new AccentButton();
             _btnStart.Text = "开始投屏";
@@ -1899,10 +1899,11 @@ class LogoBox : Panel
             var metersHost = new Panel();
             metersHost.Dock = DockStyle.Fill;
             metersHost.BackColor = Color.Transparent;
+            metersHost.Padding = new Padding(T.I(6), T.I(12), T.I(6), 0);   // 线左右内缩、上下居中
             var sepLine = new Panel();
             sepLine.Dock = DockStyle.Top;
-            sepLine.Height = T.I(1);
-            sepLine.BackColor = T.Light ? Color.FromArgb(198, 198, 204) : Color.FromArgb(88, 72, 156);
+            sepLine.Height = T.I(2);
+            sepLine.BackColor = T.Light ? Color.FromArgb(170, 170, 178) : Color.FromArgb(96, 80, 168);
             meters.Margin = T.Pad(0, 12, 0, 0);
             metersHost.Controls.Add(meters);
             metersHost.Controls.Add(sepLine);
@@ -2096,7 +2097,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.28  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.30  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
