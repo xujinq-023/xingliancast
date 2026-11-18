@@ -948,7 +948,13 @@ namespace ProjectorUi
 
     class Label2 : Label
     {
-        public Label2() { BackColor = Color.Transparent; ForeColor = T.Sub; Font = T.F(13); AutoSize = false; TextAlign = ContentAlignment.MiddleLeft; }
+        public Label2()
+        {
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
+                     | ControlStyles.UserPaint, true);      // 避免每次改文字整块重绘闪烁
+            BackColor = Color.Transparent; ForeColor = T.Sub; Font = T.F(13);
+            AutoSize = false; TextAlign = ContentAlignment.MiddleLeft;
+        }
     }
 
     // ---------------- monitor enumeration (order must match sender: primary first) ----------------
@@ -1240,7 +1246,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.41  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.46  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2089,7 +2095,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.41  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.46  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2782,7 +2788,7 @@ class LogoBox : Panel
             _mv[8].Set(tv && !line.Contains("rtt=-1.0") ? Round1(Field(line, "rtt=", "")) + " ms" : "—");
             // 电视丢包/秒：TV 端每秒上报的丢包增量，直接显示
             _mv[9].Set(tv ? Field(line, "tvlost=", "") : "—");
-            UpdateTotalTraffic(line);
+
         }
 
         /// <summary>累计总流量：引擎每次启动计数从 0 开始，数值回退即视为新会话。</summary>
@@ -2799,12 +2805,15 @@ class LogoBox : Panel
         void RefreshTrafficLabel()
         {
             if (_lblDeviceHint == null) return;
-            bool found = _cboDevice != null && _cboDevice.Items.Count > 0;
-            if (!found && !_searching) return;          // 未发现电视时该位置显示红字提示
-            _lblDeviceHint.Text = "累计发送 " + Human(_txTotalBytes);
-            _lblDeviceHint.ForeColor = T.Muted;
-            _lblDeviceHint.TextAlign = ContentAlignment.MiddleRight;   // 累计发送靠右显示
-            _lblDeviceHint.Visible = true;
+            if (_cboDevice == null || _cboDevice.Items.Count == 0) return;   // 无设备时该位置显示红字提示
+            // 只在文字真的变化时才写控件属性：每秒无条件的 Visible/ForeColor/TextAlign 赋值
+            // 会触发整窗重排→下拉框高亮每秒闪一次，而且会打断下拉列表的展开。
+            string s = "累计发送 " + Human(_txTotalBytes);
+            if (_lblDeviceHint.Text != s) _lblDeviceHint.Text = s;
+            if (!_lblDeviceHint.Visible) _lblDeviceHint.Visible = true;
+            if (_lblDeviceHint.TextAlign != ContentAlignment.MiddleRight)
+                _lblDeviceHint.TextAlign = ContentAlignment.MiddleRight;
+            if (_lblDeviceHint.ForeColor != T.Muted) _lblDeviceHint.ForeColor = T.Muted;
         }
 
         static string Human(long bytes)
