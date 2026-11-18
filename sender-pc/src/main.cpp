@@ -248,6 +248,10 @@ static void EncProfileLoad(bool& sw, int& mode) {
   int m = atoi(s.c_str() + bar + 1);
   if (m < 0 || m > 2) return;
   sw = (s.substr(0, bar) == "sw");
+  // 「硬件不可用」的记录不能长期生效：一次探测超时（驱动忙/会话泄漏）就会把硬编永久禁用，
+  // 之后每次都退回软件编码 → 原生分辨率下启动要 20~30 秒（实测事故）。
+  // 只有「硬件可用」的记录才复用；软件回退记录一律忽略，下次仍先试硬件（探测 ≤1 秒）。
+  if (sw) { sw = false; mode = -1; return; }
   mode = m;
 }
 static void EncProfileSave(bool sw, int mode) {
@@ -1069,7 +1073,10 @@ auto tick = [&]() {
       // ---------- DesktopDuplication 取帧循环 ----------
       ComPtr<ID3D11Texture2D> ddaTex;   // 常驻副本纹理（格式/尺寸跟随 Duplication 纹理）
       DXGI_OUTDUPL_FRAME_INFO fi{};
-      const DWORD dda_ms = (DWORD)(frame_int_us / 1000);
+      // 抓屏等待时间 = 2 个帧间隔（60fps → 33ms，最小 20ms）。
+      // 原来等于 1 个间隔（16ms），会周期性在下一帧到达前超时 → 实测每秒只拿到 44 帧，
+      // 4K60 视频投屏时就是肉眼可见的轻微卡顿（编码只要 2.2ms，瓶颈完全在抓屏节奏）。
+      const DWORD dda_ms = (DWORD)std::max<int64_t>((int64_t)(frame_int_us / 1000) * 2, 20);
       while (!g_stop) {
         if (g_paused) {
           // 锁屏期间：每 500ms 重发模糊帧，让电视保持解码（否则绿屏），同时遮罩文字照常显示
