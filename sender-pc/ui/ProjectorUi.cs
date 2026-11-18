@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.21  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.22  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1386,8 +1386,9 @@ class LogoBox : Panel
         GlyphButton _btnMenu, _btnMin, _btnClose;
         // main
         ComboBox _cboMonitor, _cboHeight, _cboFps, _cboBitrate, _cboLogSize, _cboDevice;
-        FlatButton _btnRefresh, _btnAutoRecover;
+        FlatButton _btnRefresh, _btnAutoRecover, _btnSmooth;
         bool _autoRecover = true;      // 断线自动恢复（锁屏/断网/引擎退出都算）
+        bool _smooth = false;          // 流畅优先（默认关 = 高清晰度，不自作主张降帧/降码率）
         bool _wantCast;                // "我要投屏"的意图：只有用户点停止才清除
         System.Windows.Forms.Timer _retryTimer;
         System.Windows.Forms.Timer _trialTimer;   // 未注册时按秒扣减当日试用额度
@@ -1824,6 +1825,19 @@ class LogoBox : Panel
             ApplyAudioStyle();
             _btnAudio.Click += delegate { ToggleAudio(); };
 
+            _btnSmooth = new FlatButton();
+            _btnSmooth.Size = T.Sz(150, 42);
+            _btnSmooth.Margin = T.Pad(0, 0, 10, 0);
+            ApplySmoothStyle();
+            _btnSmooth.Click += delegate
+            {
+                _smooth = !_smooth;
+                SaveUiConfig();
+                ApplySmoothStyle();
+                Log("流畅优先：" + (_smooth ? "开（电视解码跟不上时自动降到 30/24fps）" : "关（固定 60fps，最高清晰度）"));
+            };
+            btnRow.Controls.Add(_btnSmooth);
+
             _btnAutoRecover = new FlatButton();
             _btnAutoRecover.Size = T.Sz(150, 42);
             _btnAutoRecover.Margin = T.Pad(0, 0, 10, 0);
@@ -1833,7 +1847,7 @@ class LogoBox : Panel
                 _autoRecover = !_autoRecover;
                 SaveUiConfig();
                 ApplyAutoRecoverStyle();
-                if (_autoRecover && _wantCast && _proc == null) StartSender();
+            if (_autoRecover && _wantCast && _proc == null) StartSender();
             };
 
             btnRow.Controls.Add(_btnStart);
@@ -2058,7 +2072,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.21  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.22  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2129,9 +2143,20 @@ class LogoBox : Panel
                     if (eq <= 0) continue;
                     string k = ln.Substring(0, eq).Trim(), v = ln.Substring(eq + 1).Trim();
                     if (k == "autoRecover") _autoRecover = (v == "1");
+                if (k == "smooth") _smooth = (v == "1");
                 }
             }
             catch { }
+        }
+
+        void ApplySmoothStyle()
+        {
+            if (_btnSmooth == null) return;
+            _btnSmooth.Text = _smooth ? "娴佺晠浼樺厛锛氬紑" : "娴佺晠浼樺厛锛氬叧";
+            _btnSmooth.Fill = _smooth ? T.Card2 : T.Card2;
+            _btnSmooth.FillHover = T.Border;
+            _btnSmooth.TextColor = _smooth ? Color.White : T.Sub;
+            _btnSmooth.Invalidate();
         }
 
         void SaveUiConfig()
@@ -2484,6 +2509,7 @@ class LogoBox : Panel
             sb.Append("--log-size ").Append(mb).Append(' ');
             sb.Append("--log \"").Append(EngineLogPath()).Append("\" ");
             if (!_audioOn) sb.Append("--noaudio ");
+            if (_smooth) sb.Append("--smooth ");
             if (_switchedNotice) { sb.Append("--switched "); _switchedNotice = false; }
 
             var dev = _cboDevice.SelectedItem as Discovery.Device;

@@ -205,7 +205,7 @@ static void BlendCursorImage(uint8_t* base, int pitch, int W, int H,
 }
 static CurBitmap g_curBmp;
 
-struct Cfg { std::string ip = ""; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; bool audio = true; int display = 0; std::string logPath; int logSizeMB = 5; bool switched = false; };
+struct Cfg { std::string ip = ""; int port = pjs::DEFAULT_PORT; int bitrate = 8000; int fps = 60; bool hw = true; int height = 0; bool audio = true; int display = 0; std::string logPath; int logSizeMB = 5; bool switched = false; bool smooth = false; };
 
 static Cfg ParseArgs(int argc, char** argv) {
   Cfg c;
@@ -225,6 +225,7 @@ static Cfg ParseArgs(int argc, char** argv) {
     else if (k == "--sw") c.hw = false;
     else if (k == "--switched") c.switched = true;   // 本次启动是「被投显示器消失→已切主屏」
     else if (k == "--noaudio") c.audio = false;
+    else if (k == "--smooth") c.smooth = true;   // 流畅优先：允许按电视解码能力自动限帧/降码率
   }
   return c;
 }
@@ -921,7 +922,7 @@ auto tick = [&]() {
         static int curBitrate = cfg.bitrate;
         static int lossStreak = 0, okStreak = 0;
         static long lastDropSee = -1;
-        if (fs.alive) {
+        if (fs.alive && cfg.smooth) {   // 只有开「流畅优先」才牺牲帧率/码率；默认保持高清晰度
           long dropDelta = (lastDropSee >= 0 && fs.drop > lastDropSee) ? (fs.drop - lastDropSee) : 0;
           lastDropSee = fs.drop;
           // 解码积压（tvdrop 增长）说明电视解码吞吐不够：降码率无效（解码成本取决于像素×帧率），
