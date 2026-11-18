@@ -948,13 +948,7 @@ namespace ProjectorUi
 
     class Label2 : Label
     {
-        public Label2()
-        {
-            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
-                     | ControlStyles.UserPaint, true);      // 避免每次改文字整块重绘闪烁
-            BackColor = Color.Transparent; ForeColor = T.Sub; Font = T.F(13);
-            AutoSize = false; TextAlign = ContentAlignment.MiddleLeft;
-        }
+        public Label2() { BackColor = Color.Transparent; ForeColor = T.Sub; Font = T.F(13); AutoSize = false; TextAlign = ContentAlignment.MiddleLeft; }
     }
 
     // ---------------- monitor enumeration (order must match sender: primary first) ----------------
@@ -1246,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.48  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.35  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1394,9 +1388,7 @@ class LogoBox : Panel
         ComboBox _cboMonitor, _cboHeight, _cboFps, _cboBitrate, _cboLogSize, _cboDevice;
         FlatButton _btnRefresh, _btnAutoRecover, _btnSmooth;
         bool _autoRecover = true;      // 断线自动恢复（锁屏/断网/引擎退出都算）
-        bool _smooth = false;
-        long _txTotalBytes = 0;        // 软件启动以来累计发送字节（跨多次投屏会话）
-        long _txSessionMax = 0;        // 当前引擎会话内累计发送字节的最大值          // 流畅优先（默认关 = 高清晰度，不自作主张降帧/降码率）
+        bool _smooth = false;          // 流畅优先（默认关 = 高清晰度，不自作主张降帧/降码率）
         bool _wantCast;                // "我要投屏"的意图：只有用户点停止才清除
         System.Windows.Forms.Timer _retryTimer;
         System.Windows.Forms.Timer _trialTimer;   // 未注册时按秒扣减当日试用额度
@@ -1854,7 +1846,6 @@ class LogoBox : Panel
                 _smooth = !_smooth;
                 SaveUiConfig();
                 ApplySmoothStyle();
-                ApplySmoothToggle();
                 Log("流畅优先：" + (_smooth ? "开（电视解码跟不上时自动降到 30/24fps）" : "关（固定 60fps，最高清晰度）"));
             };
 
@@ -2095,7 +2086,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.48  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.35  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2308,19 +2299,6 @@ class LogoBox : Panel
             catch { }
         }
 
-        /// <summary>流畅优先即时生效：写共享内存第 3 个 LONG（引擎每秒读一次）。</summary>
-        void ApplySmoothToggle()
-        {
-            try
-            {
-                using (var mm = MemoryMappedFile.OpenExisting(@"Local\XingLianCastCtl"))
-                using (var acc = mm.CreateViewAccessor())
-                    acc.Write(8, _smooth ? 1 : 0);
-                Log("[UI] 流畅优先 -> " + (_smooth ? "开" : "关"));
-            }
-            catch { }
-        }
-
         void ToggleAudio()
         {
             _audioOn = !_audioOn;
@@ -2467,12 +2445,6 @@ class LogoBox : Panel
             var prevDev = _cboDevice.SelectedItem as Discovery.Device;
             string selName = prevDev != null ? prevDev.Name : null;
             _searching = false;                       // 已有结果（哪怕为空）
-            // 每秒一次的信标会把相同列表反复重填，导致下拉框/焦点每秒闪烁、鼠标点不动。
-            // 内容没变化就不再动控件。
-            // 列表没变化：直接返回，绝不碰任何控件。之前每秒都调 UpdateDeviceHint()，
-            // 会让界面每秒重排一次 → 窗口闪烁、所有下拉框刚展开就被打断。
-            if (SameDeviceList(devices)) return;
-            if (_cboDevice != null && _cboDevice.DroppedDown) return;   // 下拉展开期间不刷新
             _cboDevice.Items.Clear();
             foreach (var d in devices) _cboDevice.Items.Add(d);
             if (_cboDevice.Items.Count > 0)
@@ -2489,24 +2461,10 @@ class LogoBox : Panel
                     var it = _cboDevice.Items[i] as Discovery.Device;
                     if (it != null && it.Name == selName) { idx = i; break; }
                 }
-            if (_cboDevice.SelectedIndex != idx) _cboDevice.SelectedIndex = idx;   // 只在变化时设置
+            _cboDevice.SelectedIndex = idx;      // 强制跟随：IP 变了也选中同一台电视
         }
 
         /// <summary>接收端下拉右侧的提示：完全没找到 TV 时显示红色说明。</summary>
-        /// <summary>与当前下拉框内容比较（按 IP + 名称），用于跳过无变化的重填。</summary>
-        bool SameDeviceList(List<Discovery.Device> devices)
-        {
-            if (_cboDevice == null) return false;
-            if (devices.Count != _cboDevice.Items.Count) return false;
-            for (int i = 0; i < devices.Count; i++)
-            {
-                var cur = _cboDevice.Items[i] as Discovery.Device;
-                if (cur == null) return false;
-                if (cur.Ip != devices[i].Ip || cur.Name != devices[i].Name) return false;
-            }
-            return true;
-        }
-
         void UpdateDeviceHint()
         {
             if (_lblDeviceHint == null) return;
@@ -2515,9 +2473,7 @@ class LogoBox : Panel
             // 搜索结束后仍为空，才提示。
             bool show = !found && !_searching;
             _lblDeviceHint.Visible = show;
-            if (_cboDevice != null) _cboDevice.ForeColor = found ? T.Text : T.Err;   // 无设备时框内红字
-            if (show) { _lblDeviceHint.Text = "未发现电视端，请确认开启后重试"; _lblDeviceHint.TextAlign = ContentAlignment.MiddleLeft; }
-            else RefreshTrafficLabel();
+            if (show) _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
         }
 
         void RefreshDevices()
@@ -2792,42 +2748,6 @@ class LogoBox : Panel
             _mv[8].Set(tv && !line.Contains("rtt=-1.0") ? Round1(Field(line, "rtt=", "")) + " ms" : "—");
             // 电视丢包/秒：TV 端每秒上报的丢包增量，直接显示
             _mv[9].Set(tv ? Field(line, "tvlost=", "") : "—");
-
-        }
-
-        /// <summary>累计总流量：引擎每次启动计数从 0 开始，数值回退即视为新会话。</summary>
-        void UpdateTotalTraffic(string line)
-        {
-            string s = Field(line, "txbytes=", "");
-            long v;
-            if (!long.TryParse(s, out v) || v < 0) return;
-            if (v >= _txSessionMax) { _txTotalBytes += (v - _txSessionMax); _txSessionMax = v; }
-            else { _txTotalBytes += v; _txSessionMax = v; }
-            RefreshTrafficLabel();
-        }
-
-        void RefreshTrafficLabel()
-        {
-            if (_lblDeviceHint == null) return;
-            if (_cboDevice == null || _cboDevice.Items.Count == 0) return;   // 无设备时该位置显示红字提示
-            // 只在文字真的变化时才写控件属性：每秒无条件的 Visible/ForeColor/TextAlign 赋值
-            // 会触发整窗重排→下拉框高亮每秒闪一次，而且会打断下拉列表的展开。
-            string s = "累计发送 " + Human(_txTotalBytes);
-            if (_lblDeviceHint.Text != s) _lblDeviceHint.Text = s;
-            if (!_lblDeviceHint.Visible) _lblDeviceHint.Visible = true;
-            if (_lblDeviceHint.TextAlign != ContentAlignment.MiddleRight)
-                _lblDeviceHint.TextAlign = ContentAlignment.MiddleRight;
-            if (_lblDeviceHint.ForeColor != T.Muted) _lblDeviceHint.ForeColor = T.Muted;
-        }
-
-        static string Human(long bytes)
-        {
-            if (bytes < 1024) return bytes + " B";
-            double kb = bytes / 1024.0;
-            if (kb < 1024) return kb.ToString("0") + " KB";
-            double mb = kb / 1024.0;
-            if (mb < 1024) return mb.ToString("0.0") + " MB";
-            return (mb / 1024.0).ToString("0.00") + " GB";
         }
 
         static string Round1(string s)

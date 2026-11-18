@@ -871,17 +871,6 @@ auto tick = [&]() {
         }
       // 界面的「传输声音」勾选：共享内存里变了就立即生效
       if (ctl) { bool want = ctl[0] != 0; if (want != audioOn) setAudio(want); }
-      // 流畅优先：界面通过共享内存第 3 个 LONG 即时下发，切换后立刻生效
-      if (ctl) {
-        static bool smoothInit = false;
-        bool wantSmooth = (ctl[2] != 0);
-        if (!smoothInit) { smoothInit = true; wantSmooth = cfg.smooth; ctl[2] = cfg.smooth ? 1 : 0; }
-        if (wantSmooth != cfg.smooth) {
-          cfg.smooth = wantSmooth;
-          if (!cfg.smooth) { fpsCap = 0; enc.SetBitrate(cfg.bitrate); }   // 关掉：立刻恢复满帧率与原码率
-          Logf("[自适应] 流畅优先%s（界面即时切换）", cfg.smooth ? "开启" : "关闭，已恢复原帧率/码率");
-        }
-      }
       // 锁屏检测（每秒一次）：进入锁屏 → 暂停抓屏 + 通知电视；解锁 → 重新初始化捕获 + 通知电视
       {
         static bool wasLocked = false;
@@ -1001,10 +990,6 @@ auto tick = [&]() {
                  frames ? enc_us / frames / 1000.0 : 0.0,
                  (unsigned long long)(e - last_send_err),
                  mode == 2 ? "纹理" : mode == 1 ? "GPU转换" : "CPU");
-        {   // 追加累计发送字节（供界面换算成"软件启动以来总流量"）
-          size_t used2 = strlen(line);
-          snprintf(line + used2, sizeof line - used2, " txbytes=%llu", (unsigned long long)out.bytes());
-        }
         if (fs.alive) {   // TV 回传有效时追加接收端指标
           size_t used = strlen(line);
           snprintf(line + used, sizeof line - used, " tvfps=%.1f tvlost=%ld tvdrop=%ld rtt=%.1f",
