@@ -632,6 +632,7 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> pauseFrame; int pauseW = 0, pauseH = 0;
     bool havePauseFrame = false, pauseFirstIdr = true;
 
+    int fpsCap = 0;                  // 0 = 不限制；>0 = 电视吃不消时的临时帧率上限
     uint64_t n_acq = 0, n_lim = 0;   // 诊断：捕获源给帧数 / 被限帧丢弃数（每秒清零）
     uint64_t totalAcq = 0, totalLim = 0;   // 累计值，用于"始终没有画面"判断
     uint64_t win_us = 0, win_n = 0;  // （保留字段，令牌桶已取代）
@@ -653,7 +654,8 @@ int main(int argc, char** argv) {
         if (gap > 25000) gap_big++;                 // 诊断：>25ms 的帧间隔（视觉上就是卡一下）
         // 令牌桶（连续补充）：每秒 fps 个令牌。不能用「每秒配额」——那会先放行一整秒的帧、
         // 再冻结剩余时间（实测 --fps 30 时出现 484ms 的大间隔）。
-        tb_tokens += (double)(nowus - tb_last) * cfg.fps / 1e6;
+        const int effFps = fpsCap > 0 ? (fpsCap < cfg.fps ? fpsCap : cfg.fps) : cfg.fps;
+        tb_tokens += (double)(nowus - tb_last) * effFps / 1e6;
         if (tb_tokens > 2.0) tb_tokens = 2.0;       // 允许 2 帧突发
         tb_last = nowus;
         if (tb_tokens < 1.0) { n_lim++; totalLim++; return; }
@@ -922,6 +924,20 @@ auto tick = [&]() {
         if (fs.alive) {
           long dropDelta = (lastDropSee >= 0 && fs.drop > lastDropSee) ? (fs.drop - lastDropSee) : 0;
           lastDropSee = fs.drop;
+          // 解码积压（tvdrop 增长）说明电视解码吞吐不够：降码率无效（解码成本取决于像素×帧率），
+          // 必须限帧。实测 EZVIZ 监控画面下 tvdrop 每秒涨几十，限到 30fps 后恢复。
+          static int dropStreak = 0, cleanStreak = 0;
+          if (dropDelta > 5) { dropStreak++; cleanStreak = 0; }
+          else if (dropDelta <= 0) { cleanStreak++; dropStreak = 0; }
+          if (dropStreak >= 2 && cfg.fps > 30) {
+            fpsCap = 30;
+            Logf("[自适应] 电视解码积压(每秒丢 %ld 帧)，帧率限制到 30fps", dropDelta);
+            dropStreak = 0;
+          } else if (cleanStreak >= 15 && fpsCap > 0) {
+            fpsCap = 0;
+            Logf("[自适应] 电视解码恢复正常，解除帧率限制");
+            cleanStreak = 0;
+          }
           bool bad = (fs.lost > 5) || (dropDelta > 2);
           if (bad) { lossStreak++; okStreak = 0; } else { okStreak++; lossStreak = 0; }
           if (lossStreak >= 2 && curBitrate > 2000) {
