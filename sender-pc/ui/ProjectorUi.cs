@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.23  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.24  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1799,21 +1799,28 @@ class LogoBox : Panel
             _lblDeviceHint.Visible = true;      // 启动即提示，直到发现 TV 才隐藏
             grid.Controls.Add(_lblDeviceHint, 3, 3);
 
-            var btnRow = new FlowLayoutPanel();
+            var btnRow = new TableLayoutPanel();
+            btnRow.ColumnCount = 5;
+            btnRow.RowCount = 1;
+            for (int ci = 0; ci < 5; ci++) btnRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+            btnRow.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(42)));
+            btnRow.Height = T.I(42);
             btnRow.Dock = DockStyle.Fill;
-            btnRow.FlowDirection = FlowDirection.LeftToRight;
+            
             EnableDoubleBuffer(btnRow);
             btnRow.BackColor = Color.Transparent;
-            btnRow.Margin = T.Pad(0, 10, 0, 0);
-            btnRow.WrapContents = false;
+            btnRow.Margin = T.Pad(0, 10, 0, 10);
+            
             _btnStart = new AccentButton();
             _btnStart.Text = "开始投屏";
-            _btnStart.Size = T.Sz(118, 42);
+            _btnStart.Dock = DockStyle.Fill;
+            _btnStart.Margin = T.Pad(0, 0, 6, 0);
             _btnStart.Margin = T.Pad(0, 0, 10, 0);
             _btnStart.Click += delegate { StartSender(); };
             _btnStop = new FlatButton();
             _btnStop.Text = "停止投屏";
-            _btnStop.Size = T.Sz(118, 42);
+            _btnStop.Dock = DockStyle.Fill;
+            _btnStop.Margin = T.Pad(0, 0, 6, 0);
             _btnStop.Margin = T.Pad(0, 0, 10, 0);
             _btnStop.Fill = T.StopFill; _btnStop.FillHover = T.Hover;
             _btnStop.Stroke = T.StopStroke;
@@ -1821,13 +1828,15 @@ class LogoBox : Panel
             _btnStop.Click += delegate { StopSender(); };
             _btnAudio = new FlatButton();
             _btnAudio.Text = "声音：开";
-            _btnAudio.Size = T.Sz(118, 42);
+            _btnAudio.Dock = DockStyle.Fill;
+            _btnAudio.Margin = T.Pad(0, 0, 6, 0);
             _btnAudio.Margin = T.Pad(0, 0, 10, 0);
             ApplyAudioStyle();
             _btnAudio.Click += delegate { ToggleAudio(); };
 
             _btnSmooth = new FlatButton();
-            _btnSmooth.Size = T.Sz(118, 42);
+            _btnSmooth.Dock = DockStyle.Fill;
+            _btnSmooth.Margin = T.Pad(0, 0, 6, 0);
             _btnSmooth.Margin = T.Pad(0, 0, 10, 0);
             ApplySmoothStyle();
             _btnSmooth.Click += delegate
@@ -1839,7 +1848,8 @@ class LogoBox : Panel
             };
 
             _btnAutoRecover = new FlatButton();
-            _btnAutoRecover.Size = T.Sz(118, 42);
+            _btnAutoRecover.Dock = DockStyle.Fill;
+            _btnAutoRecover.Margin = T.Pad(0, 0, 6, 0);
             _btnAutoRecover.Margin = T.Pad(0, 0, 10, 0);
             ApplyAutoRecoverStyle();
             _btnAutoRecover.Click += delegate
@@ -1850,11 +1860,11 @@ class LogoBox : Panel
             if (_autoRecover && _wantCast && _proc == null) StartSender();
             };
 
-            btnRow.Controls.Add(_btnStart);
-            btnRow.Controls.Add(_btnStop);
-            btnRow.Controls.Add(_btnAudio);
-            btnRow.Controls.Add(_btnAutoRecover);
-            btnRow.Controls.Add(_btnSmooth);
+            btnRow.Controls.Add(_btnStart, 0, 0);
+            btnRow.Controls.Add(_btnStop, 1, 0);
+            btnRow.Controls.Add(_btnAudio, 2, 0);
+            btnRow.Controls.Add(_btnAutoRecover, 3, 0);
+            btnRow.Controls.Add(_btnSmooth, 4, 0);
             grid.Controls.Add(btnRow, 0, 4);
             grid.SetColumnSpan(btnRow, 4);
 
@@ -2073,7 +2083,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.23  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.24  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
