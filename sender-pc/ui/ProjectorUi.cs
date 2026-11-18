@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.26  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.28  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1732,7 +1732,7 @@ class LogoBox : Panel
             grid.Height = T.I(44 * 4 + 72 + 128);
             grid.BackColor = Color.Transparent;
             grid.ColumnCount = 4;
-            grid.RowCount = 7;
+            grid.RowCount = 6;
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(72)));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, T.I(92)));
@@ -1740,7 +1740,6 @@ class LogoBox : Panel
             for (int i = 0; i < 4; i++) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(44)));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(72)));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(128)));  // 指标块（2 行）
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, T.I(17)));      // 功能区分隔线（1px 线 + 上下留白）
             EnableDoubleBuffer(grid);
             ctl.Controls.Add(grid);
 
@@ -1896,14 +1895,19 @@ class LogoBox : Panel
                 _mv[i] = card;
                 meters.Controls.Add(card, i % 5, i / 5);
             }
+            // 功能区分隔线：宿主面板里顶部 Dock 一条 1px 线 + 下方指标区
+            var metersHost = new Panel();
+            metersHost.Dock = DockStyle.Fill;
+            metersHost.BackColor = Color.Transparent;
             var sepLine = new Panel();
-            sepLine.Dock = DockStyle.Fill;
-            sepLine.BackColor = T.Border;
-            sepLine.Margin = T.Pad(0, 8, 0, 8);
-            grid.Controls.Add(sepLine, 0, 6);
-            grid.SetColumnSpan(sepLine, 4);
-            grid.Controls.Add(meters, 0, 5);
-            grid.SetColumnSpan(meters, 4);
+            sepLine.Dock = DockStyle.Top;
+            sepLine.Height = T.I(1);
+            sepLine.BackColor = T.Light ? Color.FromArgb(198, 198, 204) : Color.FromArgb(88, 72, 156);
+            meters.Margin = T.Pad(0, 12, 0, 0);
+            metersHost.Controls.Add(meters);
+            metersHost.Controls.Add(sepLine);
+            grid.Controls.Add(metersHost, 0, 5);
+            grid.SetColumnSpan(metersHost, 4);
             SetState("未连接", 0);
             if (Environment.GetEnvironmentVariable("PJS_UI_DEBUG") != null)
                 Shown += delegate { DumpLayout(); };
@@ -2092,7 +2096,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.26  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.28  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
