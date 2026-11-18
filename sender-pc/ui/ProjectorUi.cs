@@ -1,4 +1,4 @@
-// Projector sender UI (WinForms, custom-drawn dark theme).
+﻿// Projector sender UI (WinForms, custom-drawn dark theme).
 // Layout: header (logo/title/version + settings/min/close) -> main card (settings + start/stop)
 //         -> status bar (connection + live stats) -> footer (host/ip/network) -> optional log drawer.
 // Wraps XingLianCastSender.exe: builds the command line, starts/stops the engine, shows its status.
@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.22  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.23  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1805,14 +1805,15 @@ class LogoBox : Panel
             EnableDoubleBuffer(btnRow);
             btnRow.BackColor = Color.Transparent;
             btnRow.Margin = T.Pad(0, 10, 0, 0);
+            btnRow.WrapContents = false;
             _btnStart = new AccentButton();
             _btnStart.Text = "开始投屏";
-            _btnStart.Size = T.Sz(150, 42);
+            _btnStart.Size = T.Sz(118, 42);
             _btnStart.Margin = T.Pad(0, 0, 10, 0);
             _btnStart.Click += delegate { StartSender(); };
             _btnStop = new FlatButton();
             _btnStop.Text = "停止投屏";
-            _btnStop.Size = T.Sz(150, 42);
+            _btnStop.Size = T.Sz(118, 42);
             _btnStop.Margin = T.Pad(0, 0, 10, 0);
             _btnStop.Fill = T.StopFill; _btnStop.FillHover = T.Hover;
             _btnStop.Stroke = T.StopStroke;
@@ -1820,13 +1821,13 @@ class LogoBox : Panel
             _btnStop.Click += delegate { StopSender(); };
             _btnAudio = new FlatButton();
             _btnAudio.Text = "声音：开";
-            _btnAudio.Size = T.Sz(150, 42);
+            _btnAudio.Size = T.Sz(118, 42);
             _btnAudio.Margin = T.Pad(0, 0, 10, 0);
             ApplyAudioStyle();
             _btnAudio.Click += delegate { ToggleAudio(); };
 
             _btnSmooth = new FlatButton();
-            _btnSmooth.Size = T.Sz(150, 42);
+            _btnSmooth.Size = T.Sz(118, 42);
             _btnSmooth.Margin = T.Pad(0, 0, 10, 0);
             ApplySmoothStyle();
             _btnSmooth.Click += delegate
@@ -1836,10 +1837,9 @@ class LogoBox : Panel
                 ApplySmoothStyle();
                 Log("流畅优先：" + (_smooth ? "开（电视解码跟不上时自动降到 30/24fps）" : "关（固定 60fps，最高清晰度）"));
             };
-            btnRow.Controls.Add(_btnSmooth);
 
             _btnAutoRecover = new FlatButton();
-            _btnAutoRecover.Size = T.Sz(150, 42);
+            _btnAutoRecover.Size = T.Sz(118, 42);
             _btnAutoRecover.Margin = T.Pad(0, 0, 10, 0);
             ApplyAutoRecoverStyle();
             _btnAutoRecover.Click += delegate
@@ -1854,6 +1854,7 @@ class LogoBox : Panel
             btnRow.Controls.Add(_btnStop);
             btnRow.Controls.Add(_btnAudio);
             btnRow.Controls.Add(_btnAutoRecover);
+            btnRow.Controls.Add(_btnSmooth);
             grid.Controls.Add(btnRow, 0, 4);
             grid.SetColumnSpan(btnRow, 4);
 
@@ -2072,7 +2073,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.22  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.23  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2152,7 +2153,7 @@ class LogoBox : Panel
         void ApplySmoothStyle()
         {
             if (_btnSmooth == null) return;
-            _btnSmooth.Text = _smooth ? "娴佺晠浼樺厛锛氬紑" : "娴佺晠浼樺厛锛氬叧";
+            _btnSmooth.Text = _smooth ? "流畅优先：开" : "流畅优先：关";
             _btnSmooth.Fill = _smooth ? T.Card2 : T.Card2;
             _btnSmooth.FillHover = T.Border;
             _btnSmooth.TextColor = _smooth ? Color.White : T.Sub;

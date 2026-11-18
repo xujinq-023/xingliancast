@@ -1,4 +1,4 @@
-// 星联投屏 安装程序（单文件：内嵌 payload.zip，安装到 %LOCALAPPDATA%\Programs，无需管理员）
+﻿// 星联投屏 安装程序（单文件：内嵌 payload.zip，安装到 %LOCALAPPDATA%\Programs，无需管理员）
 // 编译: csc /target:winexe /resource:payload.zip,payload.zip /win32icon:..\payload\logo.ico
 using System;
 using System.Collections.Generic;
@@ -52,7 +52,7 @@ static class App
     }
 
     public const string Name = "星联投屏";
-    public const string Version = "1.0.22";
+    public const string Version = "1.0.23";
     public const string Publisher = "星联投屏";
     public const string AppId = "XingLianCast";
 
