@@ -1134,10 +1134,20 @@ namespace ProjectorUi
                             var d = new Device();
                             if (kv.ContainsKey("name")) d.Name = kv["name"];
                             if (kv.ContainsKey("mod")) d.Model = kv["mod"];
-                            d.Ip = kv.ContainsKey("ip") ? kv["ip"] : ep.Address.ToString();
+                            // 以广播包的源地址为准：电视从 Wi-Fi 换到网线后，包里的 ip= 可能还是旧地址，
+                            // 而源地址一定是它当前的真实地址（这是「换 IP 后搜不到/连不上」的根因）。
+                            d.Ip = ep.Address.ToString();
                             int p;
                             if (kv.ContainsKey("port") && int.TryParse(kv["port"], out p)) d.Port = p;
-                            lock (_devices) _devices[d.Ip] = d;
+                            lock (_devices)
+                            {
+                                // 同一台电视（按名称）只保留最新 IP，避免下拉框里留着失效的旧地址
+                                var stale = new List<string>();
+                                foreach (var kvp in _devices)
+                                    if (kvp.Value.Name == d.Name && kvp.Key != d.Ip) stale.Add(kvp.Key);
+                                foreach (var k2 in stale) _devices.Remove(k2);
+                                _devices[d.Ip] = d;
+                            }
                             var snapshot = new List<Device>();
                             lock (_devices) snapshot.AddRange(_devices.Values);
                             if (onFound != null) onFound(snapshot);
@@ -1230,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.17  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.18  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1406,6 +1416,7 @@ class LogoBox : Panel
         Process _proc;
         readonly Discovery _discovery = new Discovery();
         Discovery.FoundHandler _onFound;
+        readonly List<Discovery.Device> _manualDevices = new List<Discovery.Device>();   // 手动输入的接收端（跨网段时用）
         bool _closing;
         bool _trayHinted;
         string _stateText = "开始投屏";
@@ -1773,8 +1784,27 @@ class LogoBox : Panel
             _btnRefresh.Width = T.I(88);
             _btnRefresh.Margin = T.Pad(6, 6, 0, 6);
             _btnRefresh.Click += delegate { RefreshDevices(); };
-            grid.Controls.Add(_btnRefresh, 2, 3);
-            grid.SetColumnSpan(_btnRefresh, 1);
+
+            // 「手动」：电视换网线/跨网段时广播发现不到，直接填 IP
+            var btnManual = new FlatButton();
+            btnManual.Text = "手动";
+            btnManual.Fill = T.Card2; btnManual.FillHover = T.Border;
+            btnManual.Height = T.I(32);
+            btnManual.Width = T.I(64);
+            btnManual.Margin = T.Pad(0, 6, 0, 6);
+            btnManual.Click += delegate { AddManualDevice(); };
+
+            var devBtns = new FlowLayoutPanel();
+            devBtns.Dock = DockStyle.Fill;
+            devBtns.FlowDirection = FlowDirection.LeftToRight;
+            devBtns.BackColor = Color.Transparent;
+            devBtns.Margin = T.Pad(0, 0, 0, 0);
+            devBtns.WrapContents = false;
+            _btnRefresh.Margin = T.Pad(0, 6, 6, 6);
+            devBtns.Controls.Add(_btnRefresh);
+            devBtns.Controls.Add(btnManual);
+            grid.Controls.Add(devBtns, 2, 3);
+            grid.SetColumnSpan(devBtns, 1);
 
             // 未发现 TV 的提示：放在「刷新」右侧，与接收端下拉同一行
             _lblDeviceHint = new Label2();
@@ -2047,7 +2077,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.17  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.18  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2383,7 +2413,14 @@ class LogoBox : Panel
             string sel = _cboDevice.SelectedItem != null ? _cboDevice.SelectedItem.ToString() : null;
             _searching = false;                       // 已有结果（哪怕为空）
             _cboDevice.Items.Clear();
-            foreach (var d in devices) _cboDevice.Items.Add(d);
+            // 手动添加的接收端（跨网段/广播到不了时用）排在最前，不会被自动发现结果冲掉
+            foreach (var m in _manualDevices) _cboDevice.Items.Add(m);
+            foreach (var d in devices)
+            {
+                bool dup = false;
+                foreach (var m in _manualDevices) if (m.Ip == d.Ip) { dup = true; break; }
+                if (!dup) _cboDevice.Items.Add(d);
+            }
             if (_cboDevice.Items.Count > 0)
             {
                 EndRefresh();
@@ -2410,6 +2447,88 @@ class LogoBox : Panel
             if (show) _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
         }
 
+        /// <summary>手动添加接收端：电视换网线/跨网段时广播发现不到，直接输入 IP。</summary>
+        void AddManualDevice()
+        {
+            using (var dlg = new Form())
+            {
+                dlg.Text = "手动添加接收端";
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.MaximizeBox = false;
+                dlg.MinimizeBox = false;
+                dlg.ClientSize = T.Sz(380, 150);
+                dlg.BackColor = T.Card2;
+
+                var lbl = new Label2();
+                lbl.Text = "电视端 IP（电视屏幕上有显示）";
+                lbl.Font = T.F(12);
+                lbl.ForeColor = T.Muted;
+                lbl.Location = new Point(T.I(18), T.I(16));
+                lbl.Size = T.Sz(340, 22);
+                dlg.Controls.Add(lbl);
+
+                var tb = new TextBox();
+                tb.Font = T.F(13);
+                tb.Location = new Point(T.I(18), T.I(44));
+                tb.Size = T.Sz(340, 28);
+                tb.Text = "10.5.9.";
+                dlg.Controls.Add(tb);
+
+                var ok = new FlatButton();
+                ok.Text = "添加";
+                ok.Height = T.I(32);
+                ok.Width = T.I(92);
+                ok.Fill = T.Accent; ok.FillHover = T.AccentHi;
+                ok.ForeColor = Color.White;
+                ok.Location = new Point(T.I(160), T.I(86));
+                ok.Click += delegate { dlg.DialogResult = DialogResult.OK; };
+                dlg.Controls.Add(ok);
+
+                var cancel = new FlatButton();
+                cancel.Text = "取消";
+                cancel.Height = T.I(32);
+                cancel.Width = T.I(92);
+                cancel.Fill = T.Card2; cancel.FillHover = T.Border;
+                cancel.Location = new Point(T.I(266), T.I(86));
+                cancel.Click += delegate { dlg.DialogResult = DialogResult.Cancel; };
+                dlg.Controls.Add(cancel);
+
+                dlg.AcceptButton = null;
+                tb.KeyDown += delegate (object s, KeyEventArgs e)
+                {
+                    if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; dlg.DialogResult = DialogResult.OK; }
+                };
+
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                string ip = (tb.Text ?? "").Trim();
+                IPAddress parsed;
+                if (!IPAddress.TryParse(ip, out parsed))
+                {
+                    MessageBox.Show(this, "IP 格式不对，例如 10.5.9.22", "星联投屏", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                var d = new Discovery.Device();
+                d.Name = "电视（手动）";
+                d.Model = "手动添加";
+                d.Ip = ip;
+                d.Port = 45690;
+                _manualDevices.RemoveAll(delegate (Discovery.Device x) { return x.Ip == ip; });
+                _manualDevices.Add(d);
+                // 直接插入下拉框并选中；自动发现的条目保持不变
+                for (int i = _cboDevice.Items.Count - 1; i >= 0; i--)
+                {
+                    var it = _cboDevice.Items[i] as Discovery.Device;
+                    if (it != null && it.Ip == ip) _cboDevice.Items.RemoveAt(i);
+                }
+                _cboDevice.Items.Insert(0, d);
+                _cboDevice.SelectedIndex = 0;
+                _searching = false;
+                UpdateDeviceHint();
+                EndRefresh();
+                Log("手动添加接收端 " + ip);
+            }
+        }
         void RefreshDevices()
         {
             _searching = true;

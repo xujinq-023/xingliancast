@@ -67,9 +67,15 @@ inline std::vector<Device> Discover(int ms) {
     Device d;
     d.name = kv.count("name") ? kv["name"] : "TV";
     d.model = kv.count("mod") ? kv["mod"] : "";
-    d.ip = kv.count("ip") ? kv["ip"] : std::string(::inet_ntoa(from.sin_addr));
+    // 用数据包源地址作准：电视换网口/DHCP 续租后，包里的 ip= 可能是旧地址。
+    d.ip = std::string(::inet_ntoa(from.sin_addr));
+    if (d.ip.empty() || d.ip == "0.0.0.0") d.ip = kv.count("ip") ? kv["ip"] : "";
     if (kv.count("port")) d.port = atoi(kv["port"].c_str());
-    if (d.ip.empty() || d.ip == "0.0.0.0") d.ip = ::inet_ntoa(from.sin_addr);
+    // 同一台电视（按名字）只保留最新 IP：IP 变了要把旧的丢掉
+    for (size_t i = 0; i < out.size(); ) {
+      if (out[i].name == d.name && out[i].ip != d.ip) out.erase(out.begin() + (long)i);
+      else i++;
+    }
     bool dup = false;
     for (auto& e : out) if (e.ip == d.ip) { dup = true; break; }
     if (!dup) out.push_back(d);
