@@ -1240,7 +1240,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.35  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.39  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1388,7 +1388,9 @@ class LogoBox : Panel
         ComboBox _cboMonitor, _cboHeight, _cboFps, _cboBitrate, _cboLogSize, _cboDevice;
         FlatButton _btnRefresh, _btnAutoRecover, _btnSmooth;
         bool _autoRecover = true;      // 断线自动恢复（锁屏/断网/引擎退出都算）
-        bool _smooth = false;          // 流畅优先（默认关 = 高清晰度，不自作主张降帧/降码率）
+        bool _smooth = false;
+        long _txTotalBytes = 0;        // 软件启动以来累计发送字节（跨多次投屏会话）
+        long _txSessionMax = 0;        // 当前引擎会话内累计发送字节的最大值          // 流畅优先（默认关 = 高清晰度，不自作主张降帧/降码率）
         bool _wantCast;                // "我要投屏"的意图：只有用户点停止才清除
         System.Windows.Forms.Timer _retryTimer;
         System.Windows.Forms.Timer _trialTimer;   // 未注册时按秒扣减当日试用额度
@@ -1846,6 +1848,7 @@ class LogoBox : Panel
                 _smooth = !_smooth;
                 SaveUiConfig();
                 ApplySmoothStyle();
+                ApplySmoothToggle();
                 Log("流畅优先：" + (_smooth ? "开（电视解码跟不上时自动降到 30/24fps）" : "关（固定 60fps，最高清晰度）"));
             };
 
@@ -2086,7 +2089,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.35  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.39  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2299,6 +2302,19 @@ class LogoBox : Panel
             catch { }
         }
 
+        /// <summary>流畅优先即时生效：写共享内存第 3 个 LONG（引擎每秒读一次）。</summary>
+        void ApplySmoothToggle()
+        {
+            try
+            {
+                using (var mm = MemoryMappedFile.OpenExisting(@"Local\XingLianCastCtl"))
+                using (var acc = mm.CreateViewAccessor())
+                    acc.Write(8, _smooth ? 1 : 0);
+                Log("[UI] 流畅优先 -> " + (_smooth ? "开" : "关"));
+            }
+            catch { }
+        }
+
         void ToggleAudio()
         {
             _audioOn = !_audioOn;
@@ -2474,6 +2490,7 @@ class LogoBox : Panel
             bool show = !found && !_searching;
             _lblDeviceHint.Visible = show;
             if (show) _lblDeviceHint.Text = "未发现电视端，请确认开启后重试";
+            else RefreshTrafficLabel();
         }
 
         void RefreshDevices()
@@ -2748,6 +2765,38 @@ class LogoBox : Panel
             _mv[8].Set(tv && !line.Contains("rtt=-1.0") ? Round1(Field(line, "rtt=", "")) + " ms" : "—");
             // 电视丢包/秒：TV 端每秒上报的丢包增量，直接显示
             _mv[9].Set(tv ? Field(line, "tvlost=", "") : "—");
+            UpdateTotalTraffic(line);
+        }
+
+        /// <summary>累计总流量：引擎每次启动计数从 0 开始，数值回退即视为新会话。</summary>
+        void UpdateTotalTraffic(string line)
+        {
+            string s = Field(line, "txbytes=", "");
+            long v;
+            if (!long.TryParse(s, out v) || v < 0) return;
+            if (v >= _txSessionMax) { _txTotalBytes += (v - _txSessionMax); _txSessionMax = v; }
+            else { _txTotalBytes += v; _txSessionMax = v; }
+            RefreshTrafficLabel();
+        }
+
+        void RefreshTrafficLabel()
+        {
+            if (_lblDeviceHint == null) return;
+            bool found = _cboDevice != null && _cboDevice.Items.Count > 0;
+            if (!found && !_searching) return;          // 未发现电视时该位置显示红字提示
+            _lblDeviceHint.Text = "累计发送 " + Human(_txTotalBytes);
+            _lblDeviceHint.ForeColor = T.Muted;
+            _lblDeviceHint.Visible = true;
+        }
+
+        static string Human(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            double kb = bytes / 1024.0;
+            if (kb < 1024) return kb.ToString("0") + " KB";
+            double mb = kb / 1024.0;
+            if (mb < 1024) return mb.ToString("0.0") + " MB";
+            return (mb / 1024.0).ToString("0.00") + " GB";
         }
 
         static string Round1(string s)
