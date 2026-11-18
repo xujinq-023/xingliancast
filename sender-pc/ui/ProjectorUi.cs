@@ -1246,7 +1246,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.46  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.48  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -2095,7 +2095,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.46  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.48  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2469,7 +2469,10 @@ class LogoBox : Panel
             _searching = false;                       // 已有结果（哪怕为空）
             // 每秒一次的信标会把相同列表反复重填，导致下拉框/焦点每秒闪烁、鼠标点不动。
             // 内容没变化就不再动控件。
-            if (SameDeviceList(devices)) { UpdateDeviceHint(); return; }
+            // 列表没变化：直接返回，绝不碰任何控件。之前每秒都调 UpdateDeviceHint()，
+            // 会让界面每秒重排一次 → 窗口闪烁、所有下拉框刚展开就被打断。
+            if (SameDeviceList(devices)) return;
+            if (_cboDevice != null && _cboDevice.DroppedDown) return;   // 下拉展开期间不刷新
             _cboDevice.Items.Clear();
             foreach (var d in devices) _cboDevice.Items.Add(d);
             if (_cboDevice.Items.Count > 0)
@@ -2512,6 +2515,7 @@ class LogoBox : Panel
             // 搜索结束后仍为空，才提示。
             bool show = !found && !_searching;
             _lblDeviceHint.Visible = show;
+            if (_cboDevice != null) _cboDevice.ForeColor = found ? T.Text : T.Err;   // 无设备时框内红字
             if (show) { _lblDeviceHint.Text = "未发现电视端，请确认开启后重试"; _lblDeviceHint.TextAlign = ContentAlignment.MiddleLeft; }
             else RefreshTrafficLabel();
         }
