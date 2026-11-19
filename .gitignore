@@ -47,3 +47,5 @@ receiver-tv/lock_overlay_snippet.txt
 _nas-staging-*/
 crash-*.txt
 ui.log
+_*.log
+*.tar
