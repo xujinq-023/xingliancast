@@ -1279,7 +1279,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.41  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.42  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1797,8 +1797,9 @@ class LogoBox : Panel
 
             grid.Controls.Add(Txt("帧率"), 2, 1);
             _cboFps = Combo();
-            _cboFps.Items.AddRange(new object[] { "60", "30" });
+            _cboFps.Items.AddRange(new object[] { "60", "45", "30" });
             _cboFps.SelectedIndex = 0;
+            _cboFps.SelectedIndexChanged += delegate { ApplyPaceLive(); };
             grid.Controls.Add(_cboFps, 3, 1);
 
             grid.Controls.Add(Txt("码率"), 0, 2);
@@ -2129,7 +2130,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.41  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.42  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2369,6 +2370,21 @@ class LogoBox : Panel
                 _btnAudio.TextColor = T.Sub;
             }
             _btnAudio.Invalidate();
+        }
+
+        void ApplyPaceLive()
+        {
+            if (_proc == null || _proc.HasExited) return;      // 没在投屏：下次启动时由 --pace 生效
+            int v;
+            if (!int.TryParse(_cboFps.Text, out v)) return;
+            try
+            {
+                using (var mm = MemoryMappedFile.OpenExisting(@"Local\XingLianCastCtl"))
+                using (var acc = mm.CreateViewAccessor())
+                    acc.Write(12, v);
+                Log("[UI] 帧率改为 " + v + " fps（即时生效）");
+            }
+            catch { }
         }
 
         void ApplyAudioToggle()
@@ -2615,6 +2631,7 @@ class LogoBox : Panel
             if (h.Length > 0) sb.Append("--height ").Append(h).Append(' ');
 
             sb.Append("--fps ").Append(_cboFps.SelectedItem).Append(' ');
+            sb.Append("--pace ").Append(_cboFps.SelectedItem).Append(' ');   // 帧率即输出节拍
             sb.Append("--bitrate ").Append(_cboBitrate.SelectedItem).Append(' ');
 
             int mb = 5;

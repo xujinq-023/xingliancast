@@ -668,7 +668,7 @@ int main(int argc, char** argv) {
     HANDLE ctlMap = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 64,
                                        L"Local\\XingLianCastCtl");
     volatile LONG* ctl = ctlMap ? (volatile LONG*)MapViewOfFile(ctlMap, FILE_MAP_ALL_ACCESS, 0, 0, 64) : nullptr;
-    if (ctl) { ctl[0] = cfg.audio ? 1 : 0; ctl[1] = 0; }
+    if (ctl) { ctl[0] = cfg.audio ? 1 : 0; ctl[1] = 0; ctl[3] = cfg.pace; }   // [3]=帧率节拍
     auto setAudio = [&](bool on) {
       if (on == audioOn) return;
       if (on) {
@@ -968,6 +968,14 @@ auto tick = [&]() {
         }
       // 界面的「传输声音」勾选：共享内存里变了就立即生效
       if (ctl) { bool want = ctl[0] != 0; if (want != audioOn) setAudio(want); }
+      // 帧率节拍：界面改下拉框时通过共享内存第 4 个 LONG 下发，1 秒内生效，无需重开投屏
+      if (ctl) {
+        int wantPace = ctl[3];
+        if (wantPace >= 20 && wantPace <= 120 && wantPace != cfg.pace) {
+          cfg.pace = wantPace; paceFps = (double)wantPace;
+          Logf("[节拍] 界面改为 %d fps（即时生效）", wantPace);
+        }
+      }
       // 锁屏检测（每秒一次）：进入锁屏 → 暂停抓屏 + 通知电视；解锁 → 重新初始化捕获 + 通知电视
       {
         static bool wasLocked = false;
