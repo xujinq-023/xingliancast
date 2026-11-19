@@ -1371,6 +1371,31 @@ auto tick = [&]() {
           frame.Close();
         }
         if (drained > 0 && wgcFirstFrame == 0) wgcFirstFrame = GetTickCount64();
+        // 冷启动引导帧：如果开始投屏时桌面本来就是静止的（例如一打开就是暂停的 4K 视频），
+        // WGC 永远不会回调 → 一帧都没采到 → 没有 IDR → 电视端一直等、随后被判断开。
+        // 这里在 800ms 仍无帧时用 DDA 抓一帧当初始画面（DDA 的首次 Acquire 一定返回整屏）。
+        if (wgcFirstFrame == 0 && GetTickCount64() - wgcStart > 800) {
+          static bool triedBootstrap = false;
+          if (!triedBootstrap) {
+            triedBootstrap = true;
+            if (!dup) initDDA();
+            if (dup) {
+              DXGI_OUTDUPL_FRAME_INFO bfi{};
+              ComPtr<IDXGIResource> bres;
+              ComPtr<ID3D11Texture2D> btex;
+              if (SUCCEEDED(dup->AcquireNextFrame(500, &bfi, &bres)) && SUCCEEDED(bres.As(&btex))) {
+                LONGLONG bt = bfi.LastPresentTime.QuadPart > 0
+                    ? bfi.LastPresentTime.QuadPart * 10000000 / qpf.QuadPart : 0;
+                process(btex.Get(), bt);
+                dup->ReleaseFrame();
+                wgcFirstFrame = GetTickCount64();
+                Logf("[引导] WGC 首帧未到（画面本来就是静止的），已用 DDA 抓一帧作为初始画面\n");
+              } else {
+                Logf("[引导] DDA 抓帧失败，等待 WGC（可能被 WGC 会话占用）\n");
+              }
+            }
+          }
+        }
         // 静止补帧：用「最后一帧」的 NV12 重新编一帧（强制关键帧），
         // 画面就是暂停时的画面，不会跳回旧关键帧；重发旧包会闪回过去（PPT/视频都不对）。
         if (drained == 0 && GetTickCount64() - lastSendMs > 500) {

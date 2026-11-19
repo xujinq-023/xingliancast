@@ -52,7 +52,7 @@ static class App
     }
 
     public const string Name = "星联投屏";
-    public const string Version = "1.0.46";
+    public const string Version = "1.0.47";
     public const string Publisher = "星联投屏";
     public const string AppId = "XingLianCast";
 
