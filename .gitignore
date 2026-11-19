@@ -45,3 +45,5 @@ installer/tools/last-license.txt
 receiver-tv/lock_overlay_snippet.txt
 # NAS 离线时的本地暂存（备份用，不入库）
 _nas-staging-*/
+crash-*.txt
+ui.log
