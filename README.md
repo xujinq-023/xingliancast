@@ -5,6 +5,8 @@
 
 ![电脑端](screenshots/pc-main.png)
 
+![电视端](screenshots/tv-casting.jpg)
+
 ## 核心特性
 
 | 特性 | 说明 |
@@ -52,9 +54,9 @@
 - 邮箱：**xujinq@hotmail.com**
 - 微信（扫码添加，备注「投屏」）：
 
-![微信](screenshots/wechat-qr.png)
+<img src="screenshots/wechat-qr.png" width="200" alt="微信二维码">
 
 ## 版权
 
 Copyright © 2026 星联投屏. 保留所有权利。
-本软件为**专有软件**，授权范围仅限个人非商业使用。详见 [LICENSE](LICENSE)。
+详见 [LICENSE](LICENSE)。
