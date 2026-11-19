@@ -1,4 +1,4 @@
-# receiver-tv M2 build - PowerShell 5.1 compatible (no &&, one statement per line).
+﻿# receiver-tv M2 build - PowerShell 5.1 compatible (no &&, one statement per line).
 # Pipeline: aapt2 compile/link -> javac -> jar -> d8 -> inject dex -> zipalign -> keytool -> apksigner.
 # Output: receiver-tv\out\receiver-tv-debug.apk
 # ASCII only (PS 5.1 reads BOM-less files as ANSI).
@@ -51,7 +51,7 @@ Invoke-Tool (Join-Path $Bt 'aapt2.exe') (@(
     '--manifest', (Join-Path $Root 'AndroidManifest.xml'),
     '--min-sdk-version', '24',
     '--version-code', '115',
-    '--version-name', '1.0.15'
+    '--version-name', '1.0.16'
 ) + $ResFlags) | Out-Null
 
 # ---------- 3. javac ----------

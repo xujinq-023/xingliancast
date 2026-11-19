@@ -122,6 +122,9 @@ public final class RxEngine {
     private long aLastSeq = -1;                        // rx-thread only
     private volatile long lastAudioMs;
     private volatile long lastFrameWall;     // 最近一次真正解出帧的墙上时间
+    private volatile long lastOutMs = 0;     // 最近一次有输出帧（fps>0）的时间：自愈 W2 用
+    private volatile long lastHealMs = 0;    // 上次自愈时间（5 秒冷却）
+    private volatile long lastFedAtHeal = 0; // 上次自愈时 framesFed 的值
     private volatile String closedIp;        // 刚发过 bye 的电脑 IP
     private volatile long closedUntil;       // 这段时间内忽略它的残留包（否则会把「会话热」重新点亮，挡住下一台）
     private volatile boolean pauseShown;     // 已提示"画面已暂停"
@@ -998,12 +1001,26 @@ public final class RxEngine {
         // 故意空实现：保留函数与调用点，避免以后再误启用。
     }
 
+    /** 自愈：重建解码器并重新等关键帧，用户无感。 */
+    private void heal(String why) {
+        Logx.i("[自愈] " + why + " → 重建解码器");
+        Log.i(TAG, "[heal] " + why);
+        lastHealMs = SystemClock.elapsedRealtime();
+        lastFedAtHeal = framesFed.get();
+        asmReset = true;
+        lastMetaSeq = -1;
+        releaseCodec();
+        waitingIdr = true;
+        postStatus();
+    }
+
     private void tick() {
         // checkPauseFallback();   // 需要重新启用时，务必把阈值放宽到 >5s 并先和发送端的补帧节奏对齐
         long n = framesFed.get();
         fps = n - prevFrames;                                  // 1s cadence
         if (fps < 0) fps = 0;                                  // bye 时 framesFed 归零会算出负值
         prevFrames = n;
+        if (fps > 0) lastOutMs = SystemClock.elapsedRealtime();   // 有输出：刷新 W2 判据
         if (Logx.isEnabled() && (++tickN % 5) == 0) {
             Logx.i("stat fps=" + fps + " fed=" + framesFed.get() + " lost=" + lostSeq.get()
                     + " dropAu=" + droppedAu.get() + " idr=" + fedIdr.get()
@@ -1012,7 +1029,38 @@ public final class RxEngine {
                 + " pport=" + (pcPort.isEmpty() ? "-" : pcPort)
                     + " res=" + (width > 0 ? width + "x" + height : "-"));
         }
-        boolean streaming = lastRxMs != 0
+        // ---- 自愈看门狗（每秒一次）----
+    // 电视端偶发“僵死”：PC 连上了但一帧都不解码（res=- fed=0），或解码器卡住（fed 涨 fps=0），
+    // 以前必须让用户完全退出 App 才能恢复。这里自动重建解码器，用户无感。
+    {
+      long nowH = SystemClock.elapsedRealtime();
+      boolean hostKnown = peer != null && !peer.equals("?") && !peer.equals("-");
+      if (nowH - lastHealMs > 5000) {
+        // W1：hello 之后 3 秒一帧都没进解码器 → 解码器/重组器状态坏了
+        if (hostKnown && lastHelloMs > 0 && nowH - lastHelloMs > 3000 && framesFed.get() == 0) {
+          heal("W1 hello 后 3 秒无帧");
+        }
+        // W2：有持续输入但 5 秒没有任何输出帧 → MediaCodec 卡死
+        else if (hostKnown && lastOutMs > 0 && nowH - lastOutMs > 5000
+                 && framesFed.get() > lastFedAtHeal) {
+          heal("W2 有输入但 5 秒无输出");
+        }
+        // W3：会话还在但 8 秒收不到任何包 → 释放解码器，回到等待页
+        else if (hostKnown && lastRxMs != 0 && nowH - lastRxMs > 8000) {
+          Logx.i("[自愈] W3 8 秒无数据包，释放解码器");
+          releaseCodec();
+          waitingIdr = true;
+          lastFrameWall = 0;
+          peer = "-";
+          lastRxMs = 0;
+          lastRxWall = 0;
+          framesFed.set(0);
+          lastHealMs = nowH;
+          postStatus();
+        }
+      }
+    }
+    boolean streaming = lastRxMs != 0
                 && SystemClock.elapsedRealtime() - lastRxMs < IDLE_MS;
         // 空闲超时释放解码器；但「主动断开」后要留 3.5 秒冻结最后一帧。
         // 冻结期结束后把 peer 也清掉，否则电视端会一直显示"正在连接…"（源设备已经关掉了）。
