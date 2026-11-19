@@ -936,6 +936,11 @@ int main(int argc, char** argv) {
     if (last == 0) { last = nowMs; return; }
     if (nowMs - last < 1000) return;
     last = nowMs;
+    // M10：试用额度只在「真的在出画面」时消耗。锁屏暂停、电视没连上、
+    // 画面卡住空转都不该扣用户的试用时间（以前一律照扣）。
+    if (g_paused) return;
+    if (lastSendMs == 0) return;                  // 一帧都没发过
+    if (nowMs - lastSendMs > 2000) return;        // 2 秒没出帧：等电视/卡住
     g_trialUsedSec++;
     if (g_trialUsedSec % 5 == 0) lic::trial_set(g_trialUsedSec);
     if (g_trialUsedSec >= lic::kTrialSecondsPerDay) {
