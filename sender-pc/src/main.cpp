@@ -608,7 +608,8 @@ int main(int argc, char** argv) {
       g11::IDirect3DDevice d3ddev{ nullptr };
       winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(),
           reinterpret_cast<IInspectable**>(winrt::put_abi(d3ddev))));
-      pool = caps::Direct3D11CaptureFramePool::CreateFreeThreaded(
+      // WGC 固定用 GPU 转换：纹理直入拿不到 NV12，静止补帧就无法重编「最后一帧」
+    pool = caps::Direct3D11CaptureFramePool::CreateFreeThreaded(
           d3ddev, gdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, gfx::SizeInt32{ w, h });
       session = pool.CreateCaptureSession(item);
       try { session.IsCursorCaptureEnabled(true); } catch (...) {}
@@ -694,6 +695,9 @@ int main(int argc, char** argv) {
     uint64_t lastRescueMs = startMs;   // 编码器看门狗：上一次尝试切换输入/编码器的时间
     uint64_t lastIdrMs = GetTickCount64();             // 上一次发出关键帧的时间
     uint64_t lastAuMs = GetTickCount64();              // 上一次真正编码出 AU 的时间（看门狗用）
+    std::vector<uint8_t> lastIdrAu;                     // 最近一个关键帧的压缩数据：静止补帧用
+    std::vector<uint8_t> lastNv12;                      // 最后一帧的 NV12（静止补帧时重编，保证画面不跳）
+    int lastNv12W = 0, lastNv12H = 0, lastNv12Stride = 0;
     bool needIdr = false;                              // 需要立刻补一个 IDR（丢包/首帧丢失）
     bool profSaved = false;                            // 是否已把可用编码器配置落盘
     int lastSecFrames = 0;                             // 上一秒实际编码帧数（判断桌面是否静止）
@@ -702,6 +706,7 @@ int main(int argc, char** argv) {
       uint64_t ts_us = (uint64_t)q.QuadPart * 1000000 / (uint64_t)qpf.QuadPart;
       if (cfg_sps.empty()) { auto c = pjs::extract_cfg(au, n); if (!c.empty()) cfg_sps = std::move(c); }
       if (!g_nosend) out.send_au(au, n, ts_us, key, idr);
+      if (idr && n > 0 && n <= (4u << 20)) lastIdrAu.assign(au, au + n);   // 缓存关键帧，供静止补帧
       if (key) lastIdrMs = GetTickCount64();
       frames++; total_au++;
     };
@@ -825,6 +830,14 @@ int main(int argc, char** argv) {
             ok = enc.Encode(yp, (int)mpGPU.RowPitch, yp + (size_t)mpGPU.RowPitch * eh,
                             (int)mpGPU.RowPitch, t100, dur100, forceIdr, on_au,
                             (size_t)mpGPU.RowPitch * eh * 3 / 2);
+            // 缓存这一帧的 NV12（静止补帧时用它重编，保证补的是「最后一帧」而不是旧关键帧）
+            {
+              size_t stride = (size_t)mpGPU.RowPitch, hh = (size_t)eh;
+              lastNv12W = ew; lastNv12H = eh; lastNv12Stride = (int)stride;
+              lastNv12.resize(stride * hh * 3 / 2);
+              memcpy(lastNv12.data(), yp, stride * hh);
+              memcpy(lastNv12.data() + stride * hh, yp + stride * hh, stride * hh / 2);
+            }
             ctx->Unmap(stageNV12.Get(), 0);
           }
           QueryPerformanceCounter(&c2);
@@ -1358,6 +1371,27 @@ auto tick = [&]() {
           frame.Close();
         }
         if (drained > 0 && wgcFirstFrame == 0) wgcFirstFrame = GetTickCount64();
+        // 静止补帧：用「最后一帧」的 NV12 重新编一帧（强制关键帧），
+        // 画面就是暂停时的画面，不会跳回旧关键帧；重发旧包会闪回过去（PPT/视频都不对）。
+        if (drained == 0 && GetTickCount64() - lastSendMs > 500) {
+          LARGE_INTEGER q; QueryPerformanceCounter(&q);
+          uint64_t ts_us = (uint64_t)q.QuadPart * 1000000 / (uint64_t)qpf.QuadPart;
+          if (!lastNv12.empty() && lastNv12W > 0) {
+            uint8_t* yp = lastNv12.data();
+            uint8_t* uv = yp + (size_t)lastNv12Stride * lastNv12H;
+            if (!g_noenc)
+              enc.Encode(yp, lastNv12Stride, uv, lastNv12Stride, (LONGLONG)ts_us,
+                         dur100, true, on_au, (size_t)lastNv12Stride * lastNv12H * 3 / 2);
+            static int dbgN = 0;
+            if ((++dbgN % 10) == 1)
+              Logf("[补帧] 静止 %llums，重编最后一帧 %dx%d\n",
+                   (unsigned long long)(GetTickCount64() - lastSendMs), lastNv12W, lastNv12H);
+          } else if (!lastIdrAu.empty() && !g_nosend) {
+            out.send_au(lastIdrAu.data(), lastIdrAu.size(), ts_us, true, true);
+          }
+          lastSendMs = GetTickCount64();
+          total_au++;
+        }
         // WGC 兜底：创建成功也可能一直不出帧（权限被撤销、远程会话切换、驱动异常）。
         // 3 秒无帧 → 重建采集会话；再 3 秒仍无帧 → 放弃 WGC，退出码 8，
         // 界面据此用 PJS_NOWGC=1 自动重启一次，整场走 DesktopDuplication。
