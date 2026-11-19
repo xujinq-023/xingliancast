@@ -255,11 +255,16 @@ static void EncProfileLoad(bool& sw, int& mode) {
   // 之后每次都退回软件编码 → 原生分辨率下启动要 20~30 秒（实测事故）。
   // 只有「硬件可用」的记录才复用；软件回退记录一律忽略，下次仍先试硬件（探测 ≤1 秒）。
   if (sw) { sw = false; mode = -1; return; }
+  // 纹理直入（mode 2）在 WGC + 1080p 下实测 56~108ms/帧（正常 1ms），会直接把帧率打到 9fps。
+  // 这条路径不再从缓存复用，一律按 GPU 转换（mode 1）启动。
+  if (m == 2) { mode = 1; return; }
   mode = m;
 }
 static void EncProfileSave(bool sw, int mode) {
   char b[32];
-  snprintf(b, sizeof b, "%s|%d", sw ? "sw" : "hw", mode);
+  // 永不写入纹理直入(2)：该路径实测会让编码耗时飙到 100ms 级
+  int saveMode = (mode == 2) ? 1 : mode;
+  snprintf(b, sizeof b, "%s|%d", sw ? "sw" : "hw", saveMode);
   lic::store_write("encoder.cfg", b);
 }
 
@@ -1318,7 +1323,9 @@ auto tick = [&]() {
           tick();
           continue;
         }
-        while (auto frame = pool.TryGetNextFrame()) {
+        int drained = 0;   // cap the drain so tick() (per-second stats) always runs
+      while (auto frame = pool.TryGetNextFrame()) {
+        if (++drained > 4) { frame.Close(); break; }
           auto surface = frame.Surface();
           dx11i::IDirect3DDxgiInterfaceAccess* rawacc = nullptr;
           if (SUCCEEDED(surface.as(__uuidof(dx11i::IDirect3DDxgiInterfaceAccess), (void**)&rawacc))) {

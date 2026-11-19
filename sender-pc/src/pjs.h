@@ -81,6 +81,10 @@ class UdpOut {
     // 缓冲耗尽时 sendto 返回 WSAENOBUFS 并静默丢包 → WiFi 端看到成片丢包。
     int snd = 4 << 20;
     ::setsockopt(s_, SOL_SOCKET, SO_SNDBUF, (const char*)&snd, sizeof snd);
+    // 非阻塞发送：电视端缓冲区满时 sendto 会阻塞，把整个取帧循环一起卡住
+    // （实测开始投屏后 4~15 秒没有任何统计行，界面看着像"无响应"）。
+    // 阻塞时丢包并计入 send_errors()，比卡死循环好得多。
+    { u_long nb = 1; ::ioctlsocket(s_, FIONBIO, &nb); }
     memset(&to_, 0, sizeof(to_)); to_.sin_family = AF_INET; to_.sin_port = htons((u_short)port);
     // 非法 IP 必须失败：旧版忽略 inet_pton 返回值，会把包发到 0.0.0.0 却"打开成功"
     if (inet_pton(AF_INET, ip, &to_.sin_addr) != 1) {
