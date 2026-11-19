@@ -18,6 +18,14 @@
 Get-FileHash .\XingLianCast-Setup-1.0.47.exe -Algorithm SHA256
 ```
 
+## v1.0.47 校验值
+
+| 文件 | SHA256 |
+|---|---|
+| `XingLianCast-Setup-1.0.47.exe` | `a6bdbc16c555a483e762ddce34c35b9d5627e9f80c24591a3b447cc365d671df` |
+| `XingLianCast-Portable-1.0.47.zip` | `a5a0bc3915374cfd039f413d36066e3438b1f71978f5209bde9f3ced90f25989` |
+| `receiver-tv.apk` | `a0fbf159e2665e67a141e8b51f8595ce163a19efbafd2b8538933401220b18db` |
+
 ## 历史版本
 
 如需旧版本，请到 [Releases](https://github.com/xujinq-023/xingliancast/releases) 页面翻查，一般建议使用最新版。
