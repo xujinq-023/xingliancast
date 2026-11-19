@@ -1279,7 +1279,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.43  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.44  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1486,8 +1486,8 @@ class LogoBox : Panel
             }
             if (sysDpi >= 96) T.S = sysDpi / 96f;
             AutoScaleMode = AutoScaleMode.None;
-            ClientSize = T.Sz(780, 500);
-            MinimumSize = T.Sz(720, 520);
+            ClientSize = T.Sz(780, 492);
+            MinimumSize = T.Sz(720, 470);   // 高于内容就留白，等于内容才贴合
             BackColor = T.Bg1;
             Font = T.F(13);
             DoubleBuffered = true;
@@ -2130,7 +2130,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.43  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.44  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
