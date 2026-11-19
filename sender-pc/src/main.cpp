@@ -236,6 +236,7 @@ static bool g_licensed = true;
 static bool g_tvBusy = false;      // 电视已被另一台电脑占用
 static bool g_tvLost = false;      // 电视端退出/关机（状态回传中断）
 static std::atomic<uint64_t> g_wgcf{ 0 };
+static bool g_wgcDead = false;   // WGC 创建成功但不出帧 → 本次会话弃用，界面重启时改用 DDA
 static double g_dbgEff = 0, g_dbgTok = 0; static uint64_t g_dbgGap = 0;   // 诊断：限流器实际参数   // WGC 每秒回调次数（诊断）
 
 // ---------- 编码器配置记忆 ----------
@@ -448,6 +449,7 @@ int main(int argc, char** argv) {
     HMONITOR mon = mons[idx].h;
     MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi); GetMonitorInfoW(mon, &mi);
     bool useDDA = false;
+    if (getenv("PJS_NOWGC")) { useDDA = true; Logf("PJS_NOWGC=1：跳过 WGC，直接使用 DesktopDuplication\n"); }
     ComPtr<IDXGIOutputDuplication> dup;
     caps::GraphicsCaptureItem item{ nullptr };
     try {
@@ -601,6 +603,7 @@ int main(int argc, char** argv) {
     ComPtr<IDXGIDevice> dxgi; dev.As(&dxgi);
     caps::Direct3D11CaptureFramePool pool{ nullptr };
     caps::GraphicsCaptureSession session{ nullptr };
+    if (getenv("PJS_NOWGC")) { useDDA = true; Logf("PJS_NOWGC=1：跳过 WGC，直接使用 DesktopDuplication\n"); }
     if (!useDDA) {
       g11::IDirect3DDevice d3ddev{ nullptr };
       winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(),
@@ -1324,6 +1327,7 @@ auto tick = [&]() {
           continue;
         }
         int drained = 0;   // cap the drain so tick() (per-second stats) always runs
+      uint64_t wgcStart = GetTickCount64(), wgcFirstFrame = 0; int wgcRescue = 0;
       while (auto frame = pool.TryGetNextFrame()) {
         if (++drained > 4) { frame.Close(); break; }
           auto surface = frame.Surface();
@@ -1339,6 +1343,31 @@ auto tick = [&]() {
             }
           }
           frame.Close();
+        }
+        if (drained > 0 && wgcFirstFrame == 0) wgcFirstFrame = GetTickCount64();
+        // WGC 兜底：创建成功也可能一直不出帧（权限被撤销、远程会话切换、驱动异常）。
+        // 3 秒无帧 → 重建采集会话；再 3 秒仍无帧 → 放弃 WGC，退出码 8，
+        // 界面据此用 PJS_NOWGC=1 自动重启一次，整场走 DesktopDuplication。
+        if (wgcFirstFrame == 0) {
+          uint64_t nowMs2 = GetTickCount64();
+          if (wgcRescue == 0 && nowMs2 - wgcStart > 3000) {
+            wgcRescue = 1;
+            Logf("[WGC] 3 秒没有收到任何帧，重建采集会话\n");
+            try { if (session) session.Close(); } catch (...) {}
+            try {
+              session = pool.CreateCaptureSession(item);
+              try { session.IsCursorCaptureEnabled(true); } catch (...) {}
+              try { session.IsBorderRequired(false); } catch (...) {}
+              session.StartCapture();
+              Logf("[WGC] 采集会话已重建\n");
+            } catch (winrt::hresult_error& e) {
+              Logf("[WGC] 重建失败 0x%08lx\n", (unsigned long)e.code());
+            }
+          } else if (wgcRescue == 1 && nowMs2 - wgcStart > 6000) {
+            Logf("[WGC] 重建后仍无帧，改用 DesktopDuplication\n");
+            g_wgcDead = true;
+            g_stop = true;
+          }
         }
         tick();
       }
@@ -1361,5 +1390,6 @@ auto tick = [&]() {
   logx::Shutdown();
   if (g_tvBusy) return 5;          // 电视被另一台电脑占用
   if (g_tvLost) return 7;          // 电视端退出/关机，状态回传中断
+  if (g_wgcDead) return 8;         // WGC 不出帧：界面用 PJS_NOWGC=1 自动重启一次（DDA 兜底）
   return 0;
 }

@@ -1279,7 +1279,7 @@ class LogoBox : Panel
             name.Size = T.Sz(200, 42);
 
             var ver = new Label2();
-            ver.Text = "v1.0.40  Windows → 智慧屏 局域网投屏";
+            ver.Text = "v1.0.41  Windows → 智慧屏 局域网投屏";
             ver.Font = T.F(12);
             ver.ForeColor = T.Sub;
             ver.Location = T.Pt(80, 52);
@@ -1451,6 +1451,7 @@ class LogoBox : Panel
         ToolStripMenuItem _miAutostart;
         FlatButton _btnAudio;
         ContextMenuStrip _menu;
+        bool _forceDDA = false;   // 上次 WGC 不出帧 → 本次启动强制走 DDA
         bool _audioOn = false;   // 默认不传声音（需要时手动打开）
         // runtime
         Process _proc;
@@ -2128,7 +2129,7 @@ class LogoBox : Panel
             if (_lblFootL != null)
                 _lblFootL.Text = "计算机名: " + Environment.MachineName + "          IP: " + ip;
             if (_lblFootC != null) _lblFootC.Text = "";
-            if (_lblFootR != null) _lblFootR.Text = "v1.0.40  ·  build " + _stamp;
+            if (_lblFootR != null) _lblFootR.Text = "v1.0.41  ·  build " + _stamp;
         }
 
         void LoadAutostartState()
@@ -2679,6 +2680,7 @@ class LogoBox : Panel
                 psi.StandardOutputEncoding = Encoding.UTF8;
                 psi.StandardErrorEncoding = Encoding.UTF8;
                 psi.WorkingDirectory = _baseDir;
+                if (_forceDDA) { psi.EnvironmentVariables["PJS_NOWGC"] = "1"; Log("[UI] 本次强制使用 DDA 抓屏"); }
                 _proc = new Process();
                 _proc.StartInfo = psi;
                 _proc.OutputDataReceived += OnSenderOutput;
@@ -2713,6 +2715,16 @@ class LogoBox : Panel
                             UpdateButtons();
                             RefreshLicenseBadge();
                             OpenLicenseDialog();
+                            return;
+                        }
+                        if (exitCode == 8)
+                        {
+                            // WGC 创建成功但一直不出帧：改用 DDA 重开一次
+                            _forceDDA = true;
+                            SetState("正在改用兼容抓屏…", 1);
+                            _proc = null;
+                            Log("[UI] 引擎报告 WGC 不出帧（exit 8），改用 DDA 重启");
+                            BeginInvoke((Action)delegate { StartSender(false); });
                             return;
                         }
                         if (exitCode == 7)
