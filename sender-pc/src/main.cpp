@@ -1402,15 +1402,20 @@ auto tick = [&]() {
           LARGE_INTEGER q; QueryPerformanceCounter(&q);
           uint64_t ts_us = (uint64_t)q.QuadPart * 1000000 / (uint64_t)qpf.QuadPart;
           if (!lastNv12.empty() && lastNv12W > 0) {
-            uint8_t* yp = lastNv12.data();
-            uint8_t* uv = yp + (size_t)lastNv12Stride * lastNv12H;
-            if (!g_noenc)
-              enc.Encode(yp, lastNv12Stride, uv, lastNv12Stride, (LONGLONG)ts_us,
-                         dur100, true, on_au, (size_t)lastNv12Stride * lastNv12H * 3 / 2);
+            // mode 1 的编码器只接受纹理输入：必须把缓存 NV12 写进编码器环槽再 EncodeGPU。
+            // 直接调 enc.Encode() 是 CPU 输入 API（mode 0 专用），在 mode 1 下不产出任何 AU
+            //（实测：日志里 [补帧] 一直打印，但 包=0、电视端收不到任何帧）。
+            ID3D11Texture2D* ringTex = enc.NextInputTex(dev.Get());
+            if (ringTex && !g_noenc) {
+              ctx->UpdateSubresource(ringTex, 0, nullptr, lastNv12.data(), lastNv12Stride, 0);
+              enc.EncodeGPU((LONGLONG)ts_us * 10, dur100, true, on_au);   // EncodeGPU 用 100ns
+            } else if (!lastIdrAu.empty() && !g_nosend) {
+              out.send_au(lastIdrAu.data(), lastIdrAu.size(), ts_us, true, true);
+            }
             static int dbgN = 0;
             if ((++dbgN % 10) == 1)
-              Logf("[补帧] 静止 %llums，重编最后一帧 %dx%d\n",
-                   (unsigned long long)(GetTickCount64() - lastSendMs), lastNv12W, lastNv12H);
+              Logf("[补帧] 静止 %llums，重编最后一帧 %dx%d ring=%d\n",
+                   (unsigned long long)(GetTickCount64() - lastSendMs), lastNv12W, lastNv12H, ringTex ? 1 : 0);
           } else if (!lastIdrAu.empty() && !g_nosend) {
             out.send_au(lastIdrAu.data(), lastIdrAu.size(), ts_us, true, true);
           }
